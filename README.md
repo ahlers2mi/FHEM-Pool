@@ -151,7 +151,7 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 |----------------|---------|--------------|
 | `mixThreshold` | `2`     | ab `Soll - mixThreshold` °C wird umgerührt |
 | `mixInterval`  | `3600`  | Mindestabstand zwischen Mix-Zyklen ohne Zirkulation (s); `0` = aus |
-| `mixDuration`  | `600`   | Dauer eines Mix-Zyklus (s) |
+| `mixDuration`  | `300`   | Dauer eines Mix-Zyklus (s) |
 
 ### Solarthermie
 | Attribut            | Default     | Beschreibung |

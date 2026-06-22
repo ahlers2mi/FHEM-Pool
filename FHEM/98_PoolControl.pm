@@ -521,7 +521,7 @@ sub PoolControl_Control {
     # wenn gerade nicht geheizt wird. (mixInterval = 0 schaltet das ab.)
     my $now2        = gettimeofday();
     my $mixInterval = AttrVal($name, "mixInterval",  3600) + 0;
-    my $mixDuration = AttrVal($name, "mixDuration",  600)  + 0;
+    my $mixDuration = AttrVal($name, "mixDuration",  300)  + 0;
     my $mixThresh   = AttrVal($name, "mixThreshold", 2)    + 0;
 
     # Solange der Filter (aus beliebigem Grund) läuft, wird ohnehin
@@ -723,7 +723,7 @@ sub PoolControl_dumpConfig {
     <li><b>filterNightStart</b>, <b>filterNightEnd</b> &ndash; Nachtfilterfenster (Default 22:00&ndash;06:00)</li>
     <li><b>mixThreshold</b> &ndash; ab <code>Soll - mixThreshold</code> °C wird umgerührt (Default 2)</li>
     <li><b>mixInterval</b> &ndash; Mindestabstand zwischen Mix-Zyklen ohne Zirkulation in Sekunden, 0 = aus (Default 3600)</li>
-    <li><b>mixDuration</b> &ndash; Dauer eines Mix-Zyklus in Sekunden (Default 600)</li>
+    <li><b>mixDuration</b> &ndash; Dauer eines Mix-Zyklus in Sekunden (Default 300)</li>
     <li><b>solarSwitch</b>, <b>solarStateReading</b>, <b>solarOnRegex</b>, <b>solarOnCmd</b>, <b>solarOffCmd</b> &ndash; Solarthermie-Pumpe</li>
     <li><b>solarHysteresis</b> &ndash; Mindest-Übertemperatur des Einlaufwassers (Default 0.5)</li>
     <li><b>solarSettleTime</b> &ndash; Wartezeit nach Solar-Anlauf vor Auskühlschutz-Prüfung (Sekunden, Default 180)</li>
