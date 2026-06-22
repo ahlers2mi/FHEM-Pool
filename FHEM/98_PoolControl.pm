@@ -26,7 +26,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.1.0
+# Version:  v0.2.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -70,6 +70,10 @@ sub PoolControl_Initialize {
         . "filterOffCmd "
         . "filterNightStart "
         . "filterNightEnd "
+        # --- Umrühren / Durchmischung ---
+        . "mixThreshold "
+        . "mixInterval "
+        . "mixDuration "
         # --- Solarthermie ---
         . "solarSwitch "
         . "solarStateReading "
@@ -105,7 +109,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.1.0";
+    $hash->{VERSION} = "0.2.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -510,7 +514,41 @@ sub PoolControl_Control {
     my $inNight    = PoolControl_inWindow($nightStart, $nightEnd);
     my $nightFill  = ($inNight && $remainSec > 0) ? 1 : 0;
 
-    my $wantFilter = ($heatActive || $nightFill) ? 1 : 0;
+    # --- Umrühren / Durchmischung ----------------------------------------
+    # Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool.
+    # Damit sich die Wärme verteilt (und der Sensor nicht vorzeitig
+    # "warm genug" meldet), wird in Sollnähe periodisch zirkuliert, auch
+    # wenn gerade nicht geheizt wird. (mixInterval = 0 schaltet das ab.)
+    my $now2        = gettimeofday();
+    my $mixInterval = AttrVal($name, "mixInterval",  3600) + 0;
+    my $mixDuration = AttrVal($name, "mixDuration",  600)  + 0;
+    my $mixThresh   = AttrVal($name, "mixThreshold", 2)    + 0;
+
+    # Solange der Filter (aus beliebigem Grund) läuft, wird ohnehin
+    # durchmischt -> Mix-Timer zurücksetzen.
+    $hash->{".mixLastRun"} = $now2 if ($filterOn);
+
+    my $nearTarget = (defined $poolTemp && $poolTemp >= ($target - $mixThresh)) ? 1 : 0;
+    my $mixActive  = 0;
+    if ($mixInterval > 0) {
+        my $until = $hash->{".mixUntil"} // 0;
+        if ($now2 < $until) {
+            $mixActive = 1;                       # laufender Mix-Zyklus
+        }
+        elsif ($until > 0) {
+            delete $hash->{".mixUntil"};          # Mix-Zyklus beendet
+            $hash->{".mixLastRun"} = $now2;
+        }
+        # Neuen Mix-Zyklus starten, wenn fällig und nicht ohnehin gefiltert wird.
+        my $last = $hash->{".mixLastRun"} // 0;
+        if (!$mixActive && !$heatActive && !$nightFill && $nearTarget
+            && ($now2 - $last) >= $mixInterval) {
+            $hash->{".mixUntil"} = $now2 + $mixDuration;
+            $mixActive = 1;
+        }
+    }
+
+    my $wantFilter = ($heatActive || $nightFill || $mixActive) ? 1 : 0;
 
     if ($filterDev ne "") {
         if ($wantFilter && !$filterOn) {
@@ -529,6 +567,7 @@ sub PoolControl_Control {
           $heatActive ? ($solarActive && $wpActive ? "Solar+WP"
                        : $solarActive ? "Solar" : "WP")
         : $nightFill  ? "Nachtfilterung"
+        : $mixActive  ? "Umruehren"
         :               "kein Bedarf";
 
     # ======================================================================
@@ -564,6 +603,7 @@ sub PoolControl_Control {
     readingsBulkUpdate($hash, "filterReason",        $filterReason);
     readingsBulkUpdate($hash, "filterRuntimeToday",  $runMin);
     readingsBulkUpdate($hash, "filterRemaining",     $remainH);
+    readingsBulkUpdate($hash, "mixState",            $mixActive ? "active" : "idle");
     readingsBulkUpdate($hash, "solarState",          $solarState);
     readingsBulkUpdate($hash, "solarHeating",        $solarHeating ? "yes" : "no");
     readingsBulkUpdate($hash, "heatpumpState",       $wpState);
@@ -681,6 +721,9 @@ sub PoolControl_dumpConfig {
     <li><b>qualitySensor</b> &lt;dev&gt; &ndash; optionaler Wasserqualitätssensor (z. B. BLEYC01)</li>
     <li><b>filterSwitch</b>, <b>filterStateReading</b>, <b>filterOnRegex</b>, <b>filterOnCmd</b>, <b>filterOffCmd</b> &ndash; Filterpumpe</li>
     <li><b>filterNightStart</b>, <b>filterNightEnd</b> &ndash; Nachtfilterfenster (Default 22:00&ndash;06:00)</li>
+    <li><b>mixThreshold</b> &ndash; ab <code>Soll - mixThreshold</code> °C wird umgerührt (Default 2)</li>
+    <li><b>mixInterval</b> &ndash; Mindestabstand zwischen Mix-Zyklen ohne Zirkulation in Sekunden, 0 = aus (Default 3600)</li>
+    <li><b>mixDuration</b> &ndash; Dauer eines Mix-Zyklus in Sekunden (Default 600)</li>
     <li><b>solarSwitch</b>, <b>solarStateReading</b>, <b>solarOnRegex</b>, <b>solarOnCmd</b>, <b>solarOffCmd</b> &ndash; Solarthermie-Pumpe</li>
     <li><b>solarHysteresis</b> &ndash; Mindest-Übertemperatur des Einlaufwassers (Default 0.5)</li>
     <li><b>solarSettleTime</b> &ndash; Wartezeit nach Solar-Anlauf vor Auskühlschutz-Prüfung (Sekunden, Default 180)</li>
