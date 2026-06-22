@@ -63,6 +63,14 @@ einlaufende Wasser (`inflowSensor`) um mindestens `solarHysteresis` (Default
 0,5 °C) wärmer ist als der Pool. Ist es kälter, wird die Pumpe wieder
 abgeschaltet (Auskühlschutz) und für `solarRetryDelay` (Default 1800 s) gesperrt.
 
+**WP-Beitrag herausgerechnet:** Da Solar und WP denselben Rücklauf speisen,
+würde die WP-Wärme die Solarbewertung verfälschen. Solange der Pool **unter**
+dem WP-Sollwert (`heatpumpTemp`) liegt – die Inverter-WP also aktiv heizt –
+wird `heatpumpOffset` (~0,5 °C, die Mehrtemperatur der WP) vom Einlaufwasser
+abgezogen, bevor mit dem Pool verglichen wird. Liegt der Pool darüber, regelt
+die WP ab und es wird nichts abgezogen. So bewertet der Auskühlschutz nur die
+tatsächliche Solarwärme.
+
 ### Wärmepumpe (Inverter)
 Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
 Modul gibt sie daher nur **frei** und überlässt die Temperaturregelung der WP:
@@ -178,7 +186,7 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
-| `heatpumpOffset`       | `0.5`       | nur informativ: Mehrtemperatur der WP, fließt in `heatpumpEffective` ein |
+| `heatpumpOffset`       | `0.5`       | Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool ≤ `heatpumpTemp`) und fließt in `heatpumpEffective` ein |
 | `heatpumpTempCmd`      | –           | set-Kommando zum Durchreichen der WP-Temperatur (z. B. `temperatur`) |
 | `wpStartTime`          | `09:00`     | Beginn WP-Zeitfenster |
 | `wpEndTime`            | `22:00`     | Ende WP-Zeitfenster |

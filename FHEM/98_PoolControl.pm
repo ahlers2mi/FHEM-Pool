@@ -27,7 +27,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.3.0
+# Version:  v0.4.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -110,7 +110,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.3.0";
+    $hash->{VERSION} = "0.4.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -405,6 +405,16 @@ sub PoolControl_Control {
     my $solarOn  = PoolControl_isOn($solarDev,  $solarRd,  $solarOnRe);
     my $wpOn     = PoolControl_isOn($hpDev,     $hpRd,     $hpOnRe);
 
+    # --- WP-Beitrag aus dem Einlaufwasser herausrechnen -------------------
+    # Der gemeinsame Rücklauf (inflowSensor) wird von Solar UND WP gespeist.
+    # Die Inverter-WP hebt das Wasser um ~heatpumpOffset über ihren Sollwert.
+    # Solange der Pool unter dem WP-Sollwert liegt, heizt die WP aktiv -> diesen
+    # Beitrag abziehen, damit der Auskühlschutz nur die Solarwärme bewertet.
+    # Liegt der Pool darüber, regelt die Inverter-WP ab -> kein Abzug.
+    my $wpDiscount = ($wpOn && defined $poolTemp && $poolTemp <= $hpTemp)
+                   ? $hpOffset : 0;
+    my $inflowEff  = defined $inflowTemp ? ($inflowTemp - $wpDiscount) : undef;
+
     # --- Filterlaufzeit des Tages mitführen -------------------------------
     PoolControl_accrueRuntime($hash, $filterOn);
     my $runtimeSec = $hash->{".runtimeSec"} // 0;
@@ -441,9 +451,10 @@ sub PoolControl_Control {
         elsif ($solarOn) {
             my $onSince = $hash->{".solarOnTime"} // $now;
             if (($now - $onSince) >= $settle) {
-                # Auskühlschutz: einlaufendes Wasser muss wärmer sein als Pool.
-                if (defined $inflowTemp && defined $poolTemp
-                    && $inflowTemp <= ($poolTemp + $hysteresis)) {
+                # Auskühlschutz: einlaufendes Wasser (ohne WP-Beitrag) muss
+                # wärmer sein als der Pool.
+                if (defined $inflowEff && defined $poolTemp
+                    && $inflowEff <= ($poolTemp + $hysteresis)) {
                     PoolControl_switch($solarDev, $solarOffCmd);
                     $hash->{".solarOffColdTime"} = $now;
                     $solarState = "off (zu kalt, Auskuehlschutz)";
@@ -471,9 +482,9 @@ sub PoolControl_Control {
         }
     }
     my $solarActive = PoolControl_isOn($solarDev, $solarRd, $solarOnRe);
-    # Heizt die Solarthermie real (warmes Einlaufwasser)?
-    my $solarHeating = ($solarActive && defined $inflowTemp && defined $poolTemp
-                        && $inflowTemp > ($poolTemp + $hysteresis)) ? 1 : 0;
+    # Heizt die Solarthermie real (Einlaufwasser ohne WP-Beitrag wärmer als Pool)?
+    my $solarHeating = ($solarActive && defined $inflowEff && defined $poolTemp
+                        && $inflowEff > ($poolTemp + $hysteresis)) ? 1 : 0;
 
     # ======================================================================
     # 2) Wärmepumpe (Inverter) – nur freigeben, Regelung macht die WP selbst.
@@ -739,7 +750,7 @@ sub PoolControl_dumpConfig {
     <li><b>solarSettleTime</b> &ndash; Wartezeit nach Solar-Anlauf vor Auskühlschutz-Prüfung (Sekunden, Default 180)</li>
     <li><b>solarRetryDelay</b> &ndash; Sperrzeit nach Abschaltung wegen Auskühlung (Sekunden, Default 1800)</li>
     <li><b>heatpumpSwitch</b>, <b>heatpumpStateReading</b>, <b>heatpumpOnRegex</b>, <b>heatpumpOnCmd</b>, <b>heatpumpOffCmd</b> &ndash; Wärmepumpe</li>
-    <li><b>heatpumpOffset</b> &ndash; nur informativ: Mehrtemperatur der WP gegenüber Sollwert, fließt in <code>heatpumpEffective</code> ein (Default 0.5)</li>
+    <li><b>heatpumpOffset</b> &ndash; Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; heatpumpTemp) und fließt in <code>heatpumpEffective</code> ein (Default 0.5)</li>
     <li><b>heatpumpTempCmd</b> &ndash; set-Kommando, mit dem die mitgeteilte Temperatur an das WP-Gerät durchgereicht wird (z. B. <code>temperatur</code>)</li>
     <li><b>wpStartTime</b>, <b>wpEndTime</b> &ndash; Zeitfenster der Wärmepumpe (Default 09:00&ndash;22:00)</li>
     <li><b>solarIndexMin</b> &ndash; Mindest-Solarindex für WP-Betrieb (Default 1)</li>
