@@ -84,6 +84,7 @@ sub PoolControl_Initialize {
         . "solarHysteresis "
         . "solarSettleTime "
         . "solarRetryDelay "
+        . "circulationLoss "
         # --- Wärmepumpe ---
         . "heatpumpSwitch "
         . "heatpumpStateReading "
@@ -380,6 +381,7 @@ sub PoolControl_Control {
     my $hpTemp     = ReadingsNum($name, "heatpumpTemp",       0);
     my $hpOffset   = AttrVal($name, "heatpumpOffset", 0.5) + 0;
     my $hpEff      = $hpTemp + $hpOffset;
+    my $circLoss   = AttrVal($name, "circulationLoss", 0.3) + 0;
     my $hysteresis = AttrVal($name, "solarHysteresis", 0.5) + 0;
 
     # --- Schalter-/Statushelfer -------------------------------------------
@@ -405,15 +407,23 @@ sub PoolControl_Control {
     my $solarOn  = PoolControl_isOn($solarDev,  $solarRd,  $solarOnRe);
     my $wpOn     = PoolControl_isOn($hpDev,     $hpRd,     $hpOnRe);
 
-    # --- WP-Beitrag aus dem Einlaufwasser herausrechnen -------------------
-    # Der gemeinsame Rücklauf (inflowSensor) wird von Solar UND WP gespeist.
-    # Die Inverter-WP hebt das Wasser um ~heatpumpOffset über ihren Sollwert.
-    # Solange der Pool unter dem WP-Sollwert liegt, heizt die WP aktiv -> diesen
-    # Beitrag abziehen, damit der Auskühlschutz nur die Solarwärme bewertet.
-    # Liegt der Pool darüber, regelt die Inverter-WP ab -> kein Abzug.
-    my $wpDiscount = ($wpOn && defined $poolTemp && $poolTemp <= $hpTemp)
-                   ? $hpOffset : 0;
-    my $inflowEff  = defined $inflowTemp ? ($inflowTemp - $wpDiscount) : undef;
+    # --- Einlaufwasser für den Auskühlschutz korrigieren ------------------
+    # Der gemeinsame Rücklauf (inflowSensor) wird von Solar UND WP gespeist und
+    # verliert beim Umwälzen Wärme. Damit der Auskühlschutz nur die echte
+    # Solarwärme bewertet, wird das Einlaufwasser korrigiert:
+    #   * WP an und Pool unter WP-Sollwert -> WP heizt aktiv, hebt das Wasser um
+    #     ~heatpumpOffset; diesen Beitrag abziehen.
+    #   * WP an, Pool darüber -> Inverter-WP regelt ab, kein Abzug.
+    #   * WP aus -> nur Umwälzverlust (circulationLoss, ~0,3°); als Toleranz
+    #     wieder draufrechnen, sonst würde Solar fälschlich abgeschaltet.
+    my $inflowAdj;
+    if ($wpOn) {
+        $inflowAdj = (defined $poolTemp && $poolTemp <= $hpTemp) ? -$hpOffset : 0;
+    }
+    else {
+        $inflowAdj = $circLoss;
+    }
+    my $inflowEff  = defined $inflowTemp ? ($inflowTemp + $inflowAdj) : undef;
 
     # --- Filterlaufzeit des Tages mitführen -------------------------------
     PoolControl_accrueRuntime($hash, $filterOn);
@@ -749,6 +759,7 @@ sub PoolControl_dumpConfig {
     <li><b>solarHysteresis</b> &ndash; Mindest-Übertemperatur des Einlaufwassers (Default 0.5)</li>
     <li><b>solarSettleTime</b> &ndash; Wartezeit nach Solar-Anlauf vor Auskühlschutz-Prüfung (Sekunden, Default 180)</li>
     <li><b>solarRetryDelay</b> &ndash; Sperrzeit nach Abschaltung wegen Auskühlung (Sekunden, Default 1800)</li>
+    <li><b>circulationLoss</b> &ndash; Wärmeverlust beim Umwälzen, wenn die WP aus ist; wird im Auskühlschutz als Toleranz auf das Einlaufwasser addiert (Default 0.3)</li>
     <li><b>heatpumpSwitch</b>, <b>heatpumpStateReading</b>, <b>heatpumpOnRegex</b>, <b>heatpumpOnCmd</b>, <b>heatpumpOffCmd</b> &ndash; Wärmepumpe</li>
     <li><b>heatpumpOffset</b> &ndash; Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; heatpumpTemp) und fließt in <code>heatpumpEffective</code> ein (Default 0.5)</li>
     <li><b>heatpumpTempCmd</b> &ndash; set-Kommando, mit dem die mitgeteilte Temperatur an das WP-Gerät durchgereicht wird (z. B. <code>temperatur</code>)</li>

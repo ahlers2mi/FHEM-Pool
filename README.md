@@ -63,13 +63,18 @@ einlaufende Wasser (`inflowSensor`) um mindestens `solarHysteresis` (Default
 0,5 °C) wärmer ist als der Pool. Ist es kälter, wird die Pumpe wieder
 abgeschaltet (Auskühlschutz) und für `solarRetryDelay` (Default 1800 s) gesperrt.
 
-**WP-Beitrag herausgerechnet:** Da Solar und WP denselben Rücklauf speisen,
-würde die WP-Wärme die Solarbewertung verfälschen. Solange der Pool **unter**
-dem WP-Sollwert (`heatpumpTemp`) liegt – die Inverter-WP also aktiv heizt –
-wird `heatpumpOffset` (~0,5 °C, die Mehrtemperatur der WP) vom Einlaufwasser
-abgezogen, bevor mit dem Pool verglichen wird. Liegt der Pool darüber, regelt
-die WP ab und es wird nichts abgezogen. So bewertet der Auskühlschutz nur die
-tatsächliche Solarwärme.
+**Einlaufwasser korrigiert:** Da Solar und WP denselben Rücklauf speisen und das
+Wasser beim Umwälzen Wärme verliert, würde der reine Vergleich die Solarbewertung
+verfälschen. Das Einlaufwasser wird daher korrigiert, bevor es mit dem Pool
+verglichen wird:
+
+- **WP an, Pool unter `heatpumpTemp`** (WP heizt aktiv): `heatpumpOffset`
+  (~0,5 °C, Mehrtemperatur der WP) wird **abgezogen** – sonst würde die WP-Wärme
+  fälschlich der Solarthermie gutgeschrieben.
+- **WP an, Pool über `heatpumpTemp`**: die Inverter-WP regelt ab, keine Korrektur.
+- **WP aus**: nur Umwälzverlust beim Filtern; `circulationLoss` (~0,3 °C) wird als
+  Toleranz **addiert**, sonst würde Solar wegen des reinen Umwälzverlusts
+  fälschlich abgeschaltet.
 
 ### Wärmepumpe (Inverter)
 Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
@@ -177,6 +182,7 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `solarHysteresis`   | `0.5`       | Mindest-Übertemperatur Einlaufwasser |
 | `solarSettleTime`   | `180`       | Wartezeit nach Anlauf vor Auskühlprüfung (s) |
 | `solarRetryDelay`   | `1800`      | Sperrzeit nach Abschaltung wegen Auskühlung (s) |
+| `circulationLoss`   | `0.3`       | Umwälzverlust bei ausgeschalteter WP; Toleranz im Auskühlschutz (°C) |
 
 ### Wärmepumpe
 | Attribut               | Default     | Beschreibung |
@@ -253,6 +259,7 @@ attr poolControl solarOffCmd       off
 attr poolControl solarHysteresis   0.5
 attr poolControl solarSettleTime   180
 attr poolControl solarRetryDelay   1800
+attr poolControl circulationLoss   0.3
 
 # Wärmepumpe (Dummy d_pool_wp, Temperatur per Reading "temperatur")
 attr poolControl heatpumpSwitch    d_pool_wp
