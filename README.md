@@ -63,6 +63,23 @@ einlaufende Wasser (`inflowSensor`) um mindestens `solarHysteresis` (Default
 0,5 °C) wärmer ist als der Pool. Ist es kälter, wird die Pumpe wieder
 abgeschaltet (Auskühlschutz) und für `solarRetryDelay` (Default 1800 s) gesperrt.
 
+**Wann darf Solar überhaupt anlaufen?** Da es keinen Kollektorfühler gibt, weiß
+das Modul nicht von selbst, ob Wärme vom Dach kommt. Anlaufversuche lassen sich
+daher optional einschränken, damit die Pumpe nachts/ohne Sonne nicht sinnlos
+taktet:
+
+- **Zeitfenster** `solarStartTime`/`solarEndTime` (leer = ganztags).
+- **Externe Freigabe** `solarEnable` (`<dev>:<reading>`) – z. B. PV-Überschuss
+  (`MQTT2_Sonoff_POW_01:pooltrigger`) oder Kollektor-/Heizungstemperatur
+  (`mySolvis:S08.Solarkollektortemperatur`). Ist `solarEnableMin` gesetzt, wird
+  das Reading numerisch ausgewertet (`>= Min`, z. B. Watt oder °C), sonst gegen
+  `solarEnableRegex` (Default `on|ON|1`). Dieselbe Freigabe kann auch ein
+  Wetter-Dummy sein, um bei schlechtem Wetter zu sperren.
+
+Beide sind standardmäßig leer (kein Limit). Externe Geräte können zusätzlich per
+`set <name> check` eine sofortige Neubewertung anstoßen; das Freigabe-Gerät wird
+automatisch in `NOTIFYDEV` aufgenommen.
+
 **Einlaufwasser korrigiert:** Da Solar und WP denselben Rücklauf speisen und das
 Wasser beim Umwälzen Wärme verliert, würde der reine Vergleich die Solarbewertung
 verfälschen. Das Einlaufwasser wird daher korrigiert, bevor es mit dem Pool
@@ -183,6 +200,11 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `solarSettleTime`   | `180`       | Wartezeit nach Anlauf vor Auskühlprüfung (s) |
 | `solarRetryDelay`   | `1800`      | Sperrzeit nach Abschaltung wegen Auskühlung (s) |
 | `circulationLoss`   | `0.3`       | Umwälzverlust bei ausgeschalteter WP; Toleranz im Auskühlschutz (°C) |
+| `solarStartTime`    | – (leer)    | Beginn des Solar-Zeitfensters (HH:MM), leer = ganztags |
+| `solarEndTime`      | – (leer)    | Ende des Solar-Zeitfensters (HH:MM), leer = ganztags |
+| `solarEnable`       | – (leer)    | externe Freigabe `<dev>:<reading>` (PV-Überschuss, Kollektortemp., Wetter) |
+| `solarEnableMin`    | – (leer)    | Mindestwert für numerische Freigabe; leer = Regex-Auswertung |
+| `solarEnableRegex`  | `on\|ON\|1` | Regex für boolsche Freigabe (wenn kein `solarEnableMin`) |
 
 ### Wärmepumpe
 | Attribut               | Default     | Beschreibung |
@@ -260,6 +282,15 @@ attr poolControl solarHysteresis   0.5
 attr poolControl solarSettleTime   180
 attr poolControl solarRetryDelay   1800
 attr poolControl circulationLoss   0.3
+
+# Solar nur tagsüber und bei PV-Überschuss freigeben
+attr poolControl solarStartTime    09:00
+attr poolControl solarEndTime      20:00
+attr poolControl solarEnable       MQTT2_Sonoff_POW_01:pooltrigger
+# (numerisch: attr poolControl solarEnable mySolvis:S08.Solarkollektortemperatur / solarEnableMin 40)
+
+# Optional: PV-Trigger stößt sofort eine Neubewertung an
+# define n_pool_solartrigger notify MQTT2_Sonoff_POW_01:pooltrigger:.* set poolControl check
 
 # Wärmepumpe (Dummy d_pool_wp, Temperatur per Reading "temperatur")
 attr poolControl heatpumpSwitch    d_pool_wp
