@@ -33,7 +33,7 @@ Gesteuert werden:
 | **Filterung**   | Gewünschte Filterstunden pro Tag. Heizbetrieb zählt mit, Rest wird nachts nachgefiltert. |
 | **Heizung**     | Solltemperatur, geheizt über Solarthermie (Vorrang, kostenlos) und Wärmepumpe. |
 | **Auskühlschutz** | Solarthermie wird abgeschaltet, wenn das einlaufende Wasser kälter ist als der Pool. |
-| **Wärmepumpe**  | Übergangsweise nicht direkt regelbar: Soll-Temperatur wird mitgeteilt, WP heizt ~0,5 °C darüber. Läuft nur im Zeitfenster und bei ausreichendem Solarindex. |
+| **Wärmepumpe**  | Inverter-WP, regelt selbst. Modul gibt sie nur frei (Zeitfenster + ausreichender Solarindex) und teilt die Zieltemperatur mit. |
 | **Wasserqualität** | Optionaler Sensor (z. B. BLE-YC01), nur informativ, blockiert die Steuerung nicht. |
 
 ---
@@ -46,7 +46,12 @@ vorgegeben. Das Modul summiert die tatsächliche Filterlaufzeit (`filterRuntimeT
 Da der Filter beim Heizen (Solar/WP) ohnehin läuft, wird diese Zeit angerechnet.
 Fehlt am Tagesende noch Laufzeit, wird im Nachtfenster
 (`filterNightStart`–`filterNightEnd`, Default 22:00–06:00) nachgefiltert, bis das
-Tagessoll erreicht ist. Der Zähler wird um Mitternacht zurückgesetzt.
+Tagessoll erreicht ist.
+
+> Der **Filtertag** wechselt am Ende des Nachtfensters (`filterNightEnd`,
+> Default 06:00) – **nicht** um Mitternacht. So wird das nächtliche Nachfiltern
+> über Mitternacht hinweg demselben Tag zugerechnet und das Tagessoll
+> zuverlässig erreicht.
 
 > Der Filter wird vom Modul nur dann **ausgeschaltet**, wenn das Modul ihn auch
 > selbst eingeschaltet hat – manuelle Schaltungen werden nicht überstimmt.
@@ -58,16 +63,16 @@ einlaufende Wasser (`inflowSensor`) um mindestens `solarHysteresis` (Default
 0,5 °C) wärmer ist als der Pool. Ist es kälter, wird die Pumpe wieder
 abgeschaltet (Auskühlschutz) und für `solarRetryDelay` (Default 1800 s) gesperrt.
 
-### Wärmepumpe
-Die WP läuft nur, wenn **alle** Bedingungen erfüllt sind:
-- Heizbedarf besteht,
+### Wärmepumpe (Inverter)
+Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
+Modul gibt sie daher nur **frei** und überlässt die Temperaturregelung der WP:
 - aktuelle Zeit liegt im Fenster `wpStartTime`–`wpEndTime` (Default 09:00–22:00),
-- `solarIndex >= solarIndexMin` (genug Stromüberschuss),
-- `poolTemp` liegt unter der effektiven WP-Temperatur (`heatpumpTemp + heatpumpOffset`),
-- die Solarthermie heizt nicht bereits selbst (Vorrang der kostenlosen Wärme).
+- `solarIndex >= solarIndexMin` (genug Stromüberschuss für den WP-Betrieb).
 
-Die der WP mitgeteilte Temperatur wird per `set <name> heatpumpTemp <°C>` gesetzt
-und kann optional über `heatpumpTempCmd` an das WP-Gerät durchgereicht werden.
+Die der WP mitgeteilte Zieltemperatur wird per `set <name> heatpumpTemp <°C>`
+gesetzt und kann optional über `heatpumpTempCmd` an das WP-Gerät durchgereicht
+werden. Das Reading `heatpumpEffective` (= `heatpumpTemp + heatpumpOffset`) ist
+nur informativ und greift **nicht** mehr in die Schaltung ein.
 
 ---
 
@@ -139,7 +144,7 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 | `filterOnCmd`        | `on`        | Einschaltkommando |
 | `filterOffCmd`       | `off`       | Ausschaltkommando |
 | `filterNightStart`   | `22:00`     | Beginn Nachtfilterung |
-| `filterNightEnd`     | `06:00`     | Ende Nachtfilterung |
+| `filterNightEnd`     | `06:00`     | Ende Nachtfilterung; zugleich Wechsel des Filtertags (Tageszähler-Reset) |
 
 ### Umrühren / Durchmischung
 Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool. Damit sich
@@ -173,7 +178,7 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
-| `heatpumpOffset`       | `0.5`       | Mehrtemperatur der WP gegenüber Sollwert |
+| `heatpumpOffset`       | `0.5`       | nur informativ: Mehrtemperatur der WP, fließt in `heatpumpEffective` ein |
 | `heatpumpTempCmd`      | –           | set-Kommando zum Durchreichen der WP-Temperatur (z. B. `temperatur`) |
 | `wpStartTime`          | `09:00`     | Beginn WP-Zeitfenster |
 | `wpEndTime`            | `22:00`     | Ende WP-Zeitfenster |

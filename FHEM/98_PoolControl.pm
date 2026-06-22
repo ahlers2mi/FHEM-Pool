@@ -7,17 +7,18 @@
 #   * Filterung: Vorgabe der gewünschten Filterstunden pro Tag. Heizbetrieb
 #     (Solarthermie / Wärmepumpe) zirkuliert das Wasser ohnehin und wird auf
 #     das Tagessoll angerechnet. Fehlt am Tagesende noch Laufzeit, wird in
-#     einem konfigurierbaren Nachtfenster nachgefiltert.
+#     einem konfigurierbaren Nachtfenster nachgefiltert. Der Filtertag wechselt
+#     am Ende des Nachtfensters (filterNightEnd), damit das Nachfiltern über
+#     Mitternacht hinweg demselben Tag zugerechnet wird.
 #   * Solltemperatur (desiredTemperature) einstellbar.
 #   * Solarthermie mit Auskühlschutz: Beim Anlaufen wird nach einer Settle-Zeit
 #     geprüft, ob das einlaufende Wasser (inflowSensor) wärmer ist als der Pool.
 #     Ist es kälter, wird die Solarpumpe wieder abgeschaltet, damit der Pool
 #     nicht auskühlt.
-#   * Wärmepumpe (übergangsweise nicht direkt regelbar): Es kann eine
-#     Wärmepumpentemperatur mitgeteilt werden. Die WP heizt typ. etwas über
-#     dem eingestellten Wert (heatpumpOffset, Default 0,5 °C). Die WP läuft nur
-#     innerhalb eines Zeitfensters (wpStartTime/wpEndTime) und nur, wenn der
-#     Solarindex (verfügbarer Stromüberschuss) ausreicht (solarIndexMin).
+#   * Wärmepumpe (Inverter, regelt selbst): Das Modul gibt die WP nur frei
+#     (Zeitfenster wpStartTime/wpEndTime und ausreichender Solarindex,
+#     solarIndexMin = verfügbarer Stromüberschuss) und teilt ihr die
+#     Zieltemperatur mit. Die Leistungsregelung übernimmt die WP selbst.
 #   * Optionaler Wasserqualitätssensor (z. B. BLEYC01). Da dieser instabil
 #     laufen kann, ist er optional und blockiert die Steuerung nicht.
 #
@@ -26,7 +27,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.2.0
+# Version:  v0.3.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -109,7 +110,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.2.0";
+    $hash->{VERSION} = "0.3.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -191,7 +192,7 @@ sub PoolControl_Set {
     }
     elsif ($cmd eq "resetRuntime") {
         $hash->{".runtimeSec"}  = 0;
-        $hash->{".runtimeDate"} = strftime("%Y-%m-%d", localtime);
+        $hash->{".runtimeDate"} = PoolControl_dayKey($hash);
         readingsSingleUpdate($hash, "filterRuntimeToday", 0, 1);
         return undef;
     }
@@ -339,6 +340,17 @@ sub PoolControl_inWindow {
                       : ($now >= $s || $now < $e);
 }
 
+# Schlüssel des aktuellen "Filtertags". Der Tageswechsel liegt am Ende des
+# Nachtfensters (filterNightEnd, Default 06:00), damit das nächtliche
+# Nachfiltern über Mitternacht hinweg demselben Tag zugerechnet wird.
+sub PoolControl_dayKey {
+    my ($hash) = @_;
+    my $name     = $hash->{NAME};
+    my $startMin = PoolControl_hm2min(AttrVal($name, "filterNightEnd", "06:00"));
+    $startMin = 360 if (!defined $startMin);
+    return strftime("%Y-%m-%d", localtime(time() - $startMin * 60));
+}
+
 # ============================================================================
 # PoolControl_Control – die eigentliche Steuerlogik
 # ============================================================================
@@ -464,8 +476,11 @@ sub PoolControl_Control {
                         && $inflowTemp > ($poolTemp + $hysteresis)) ? 1 : 0;
 
     # ======================================================================
-    # 2) Wärmepumpe – nur im Zeitfenster und bei ausreichendem Solarindex.
-    #    Läuft ergänzend, wenn die Solarthermie nicht (ausreichend) heizt.
+    # 2) Wärmepumpe (Inverter) – nur freigeben, Regelung macht die WP selbst.
+    #    Freigabe: innerhalb des Zeitfensters und bei ausreichendem
+    #    Solarindex (verfügbarer Stromüberschuss). Die Zieltemperatur wird der
+    #    WP mitgeteilt (set heatpumpTemp -> heatpumpTempCmd); die WP moduliert
+    #    ihre Leistung selbst und schaltet bei Erreichen der Temperatur ab.
     # ======================================================================
     my $wpState = "off";
     if ($hpDev ne "") {
@@ -475,12 +490,8 @@ sub PoolControl_Control {
 
         my $inWindow = PoolControl_inWindow($wpStart, $wpEnd);
         my $indexOk  = ($index >= $indexMin) ? 1 : 0;
-        # WP heizt nur, solange Pool unter Soll UND unter der (effektiven)
-        # WP-Zieltemperatur liegt.
-        my $wpTempOk = (defined $poolTemp && $poolTemp < $hpEff) ? 1 : 0;
 
-        my $wpWant = ($heatNeeded && $inWindow && $indexOk && $wpTempOk
-                      && !$solarHeating) ? 1 : 0;
+        my $wpWant = ($inWindow && $indexOk) ? 1 : 0;
 
         if ($wpWant && !$wpOn) {
             PoolControl_switch($hpDev, $hpOnCmd);
@@ -496,10 +507,9 @@ sub PoolControl_Control {
 
         # Begründung für den deaktivierten Zustand protokollieren.
         if (!$wpWant) {
-            push @reason, "WP aus: ausserhalb Zeitfenster"      if (!$inWindow && $heatNeeded);
+            push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
             push @reason, "WP aus: Solarindex zu niedrig ($index<$indexMin)"
-                if ($inWindow && !$indexOk && $heatNeeded);
-            push @reason, "WP aus: Solar heizt bereits"          if ($solarHeating && $heatNeeded);
+                if ($inWindow && !$indexOk);
         }
     }
     my $wpActive = PoolControl_isOn($hpDev, $hpRd, $hpOnRe);
@@ -627,7 +637,7 @@ sub PoolControl_accrueRuntime {
     my ($hash, $filterOn) = @_;
 
     my $now   = gettimeofday();
-    my $today = strftime("%Y-%m-%d", localtime($now));
+    my $today = PoolControl_dayKey($hash);
 
     if (($hash->{".runtimeDate"} // "") ne $today) {
         $hash->{".runtimeDate"} = $today;
@@ -729,7 +739,7 @@ sub PoolControl_dumpConfig {
     <li><b>solarSettleTime</b> &ndash; Wartezeit nach Solar-Anlauf vor Auskühlschutz-Prüfung (Sekunden, Default 180)</li>
     <li><b>solarRetryDelay</b> &ndash; Sperrzeit nach Abschaltung wegen Auskühlung (Sekunden, Default 1800)</li>
     <li><b>heatpumpSwitch</b>, <b>heatpumpStateReading</b>, <b>heatpumpOnRegex</b>, <b>heatpumpOnCmd</b>, <b>heatpumpOffCmd</b> &ndash; Wärmepumpe</li>
-    <li><b>heatpumpOffset</b> &ndash; Mehrtemperatur der WP gegenüber Sollwert (Default 0.5)</li>
+    <li><b>heatpumpOffset</b> &ndash; nur informativ: Mehrtemperatur der WP gegenüber Sollwert, fließt in <code>heatpumpEffective</code> ein (Default 0.5)</li>
     <li><b>heatpumpTempCmd</b> &ndash; set-Kommando, mit dem die mitgeteilte Temperatur an das WP-Gerät durchgereicht wird (z. B. <code>temperatur</code>)</li>
     <li><b>wpStartTime</b>, <b>wpEndTime</b> &ndash; Zeitfenster der Wärmepumpe (Default 09:00&ndash;22:00)</li>
     <li><b>solarIndexMin</b> &ndash; Mindest-Solarindex für WP-Betrieb (Default 1)</li>
