@@ -14,7 +14,10 @@
 #   * Solarthermie mit Auskühlschutz: Beim Anlaufen wird nach einer Settle-Zeit
 #     geprüft, ob das einlaufende Wasser (inflowSensor) wärmer ist als der Pool.
 #     Ist es kälter, wird die Solarpumpe wieder abgeschaltet, damit der Pool
-#     nicht auskühlt.
+#     nicht auskühlt. Anlaufversuche lassen sich optional auf ein Zeitfenster
+#     (solarStartTime/solarEndTime) und eine externe Freigabe (solarEnable,
+#     z. B. PV-Überschuss oder Kollektortemperatur) einschränken, damit die
+#     Pumpe nachts/ohne Sonne nicht sinnlos taktet.
 #   * Wärmepumpe (Inverter, regelt selbst): Das Modul gibt die WP nur frei
 #     (Zeitfenster wpStartTime/wpEndTime und ausreichender Solarindex,
 #     solarIndexMin = verfügbarer Stromüberschuss) und teilt ihr die
@@ -27,7 +30,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.4.0
+# Version:  v0.5.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -85,6 +88,11 @@ sub PoolControl_Initialize {
         . "solarSettleTime "
         . "solarRetryDelay "
         . "circulationLoss "
+        . "solarStartTime "
+        . "solarEndTime "
+        . "solarEnable "
+        . "solarEnableRegex "
+        . "solarEnableMin "
         # --- Wärmepumpe ---
         . "heatpumpSwitch "
         . "heatpumpStateReading "
@@ -111,7 +119,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.4.0";
+    $hash->{VERSION} = "0.5.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -255,7 +263,7 @@ sub PoolControl_setNotifyDev {
 
     my %devs;
     for my $attr (qw(poolSensor inflowSensor solarIndexSensor qualitySensor
-                     filterSwitch solarSwitch heatpumpSwitch)) {
+                     filterSwitch solarSwitch heatpumpSwitch solarEnable)) {
         my $spec = AttrVal($name, $attr, "");
         next if ($spec eq "");
         my ($dev) = split(/:/, $spec, 2);
@@ -451,12 +459,53 @@ sub PoolControl_Control {
         my $retryDelay = AttrVal($name, "solarRetryDelay", 1800) + 0;
         my $now        = gettimeofday();
 
+        # --- Solarfenster: Zeit + optionale Freigabe-Bedingung ------------
+        # Ohne Kollektorfühler weiß das Modul nicht von selbst, ob Wärme vom
+        # Dach kommt. Daher optional einschränken, wann ein Anlaufversuch
+        # überhaupt erlaubt ist:
+        #   * solarStartTime/solarEndTime: Zeitfenster (leer = ganztags).
+        #   * solarEnable (<dev>:<reading>): externe Freigabe, z. B. PV-
+        #     Überschuss (pooltrigger) oder Kollektortemperatur. Bei gesetztem
+        #     solarEnableMin wird das Reading numerisch (>= Min) ausgewertet,
+        #     sonst gegen solarEnableRegex (Default on|ON|1).
+        my $solStart = AttrVal($name, "solarStartTime", "");
+        my $solEnd   = AttrVal($name, "solarEndTime",   "");
+        my $inSolarWindow = ($solStart ne "" && $solEnd ne "")
+                          ? PoolControl_inWindow($solStart, $solEnd) : 1;
+
+        my $solEnable = AttrVal($name, "solarEnable", "");
+        my $solEnergyOk = 1;
+        if ($solEnable ne "") {
+            my $solEnMin = AttrVal($name, "solarEnableMin", "");
+            if ($solEnMin ne "") {
+                $solEnergyOk = (PoolControl_num($solEnable, 0) >= $solEnMin + 0)
+                             ? 1 : 0;
+            }
+            else {
+                my ($eDev, $eRd) = split(/:/, $solEnable, 2);
+                $eRd = "state" if (!defined $eRd || $eRd eq "");
+                my $eRe = AttrVal($name, "solarEnableRegex", "on|ON|1");
+                $solEnergyOk = (defined $defs{$eDev}
+                                && ReadingsVal($eDev, $eRd, "") =~ /$eRe/) ? 1 : 0;
+            }
+        }
+        my $solarAllowed = ($inSolarWindow && $solEnergyOk) ? 1 : 0;
+
         if (!$heatNeeded) {
             # Pool warm genug -> Solar aus.
             if ($solarOn) {
                 PoolControl_switch($solarDev, $solarOffCmd);
                 $solarState = "off (Soll erreicht)";
             }
+        }
+        elsif (!$solarAllowed) {
+            # Außerhalb Solarfenster bzw. keine Solarenergie -> nicht anlaufen.
+            if ($solarOn) {
+                PoolControl_switch($solarDev, $solarOffCmd);
+            }
+            $solarState = !$inSolarWindow
+                        ? "off (ausserhalb Solarfenster)"
+                        : "off (keine Solarenergie)";
         }
         elsif ($solarOn) {
             my $onSince = $hash->{".solarOnTime"} // $now;
@@ -691,6 +740,7 @@ sub PoolControl_dumpConfig {
     my $out  = "PoolControl '$name' Konfiguration:\n";
     for my $a (qw(poolSensor inflowSensor solarIndexSensor qualitySensor
                   filterSwitch solarSwitch heatpumpSwitch
+                  solarStartTime solarEndTime solarEnable solarEnableMin
                   wpStartTime wpEndTime solarIndexMin heatpumpOffset
                   filterNightStart filterNightEnd interval)) {
         $out .= sprintf("  %-18s = %s\n", $a, AttrVal($name, $a, "(default)"));
@@ -760,6 +810,10 @@ sub PoolControl_dumpConfig {
     <li><b>solarSettleTime</b> &ndash; Wartezeit nach Solar-Anlauf vor Auskühlschutz-Prüfung (Sekunden, Default 180)</li>
     <li><b>solarRetryDelay</b> &ndash; Sperrzeit nach Abschaltung wegen Auskühlung (Sekunden, Default 1800)</li>
     <li><b>circulationLoss</b> &ndash; Wärmeverlust beim Umwälzen, wenn die WP aus ist; wird im Auskühlschutz als Toleranz auf das Einlaufwasser addiert (Default 0.3)</li>
+    <li><b>solarStartTime</b>, <b>solarEndTime</b> &ndash; Zeitfenster, in dem ein Solar-Anlaufversuch erlaubt ist (leer = ganztags)</li>
+    <li><b>solarEnable</b> &lt;dev&gt;:&lt;reading&gt; &ndash; optionale externe Freigabe für Solar (z. B. PV-Überschuss oder Kollektortemperatur). Ohne <code>solarEnableMin</code> wird gegen <code>solarEnableRegex</code> geprüft, sonst numerisch (&ge; Min)</li>
+    <li><b>solarEnableRegex</b> &ndash; Regex für die Freigabe bei boolschem Reading (Default <code>on|ON|1</code>)</li>
+    <li><b>solarEnableMin</b> &ndash; Mindestwert für die Freigabe bei numerischem Reading (z. B. Watt oder °C); leer = Regex-Auswertung</li>
     <li><b>heatpumpSwitch</b>, <b>heatpumpStateReading</b>, <b>heatpumpOnRegex</b>, <b>heatpumpOnCmd</b>, <b>heatpumpOffCmd</b> &ndash; Wärmepumpe</li>
     <li><b>heatpumpOffset</b> &ndash; Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; heatpumpTemp) und fließt in <code>heatpumpEffective</code> ein (Default 0.5)</li>
     <li><b>heatpumpTempCmd</b> &ndash; set-Kommando, mit dem die mitgeteilte Temperatur an das WP-Gerät durchgereicht wird (z. B. <code>temperatur</code>)</li>
