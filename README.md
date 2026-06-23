@@ -97,7 +97,13 @@ verglichen wird:
 Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
 Modul gibt sie daher nur **frei** und überlässt die Temperaturregelung der WP:
 - aktuelle Zeit liegt im Fenster `wpStartTime`–`wpEndTime` (Default 09:00–22:00),
-- `solarIndex >= solarIndexMin` (genug Stromüberschuss für den WP-Betrieb).
+- der `solarIndex` reicht aus (genug Stromüberschuss).
+
+**Solarindex-Hysterese:** Damit die WP an der Schwelle nicht flattert, wird sie
+erst ab `solarIndexOn` freigegeben und erst bei `solarIndexOff` wieder gesperrt;
+im Band dazwischen bleibt der Zustand erhalten. Beispiel `solarIndexOn 8` /
+`solarIndexOff 3`: ein ab Index 8, aus erst wieder bei Index ≤ 3. Sind die beiden
+Attribute nicht gesetzt, gilt der einfache Schwellwert `solarIndexMin`.
 
 Die der WP mitgeteilte Zieltemperatur wird per `set <name> heatpumpTemp <°C>`
 gesetzt und kann optional über `heatpumpTempCmd` an das WP-Gerät durchgereicht
@@ -218,7 +224,9 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `heatpumpTempCmd`      | –           | set-Kommando zum Durchreichen der WP-Temperatur (z. B. `temperatur`) |
 | `wpStartTime`          | `09:00`     | Beginn WP-Zeitfenster |
 | `wpEndTime`            | `22:00`     | Ende WP-Zeitfenster |
-| `solarIndexMin`        | `1`         | Mindest-Solarindex für WP-Betrieb |
+| `solarIndexMin`        | `1`         | Mindest-Solarindex für WP-Betrieb (Rückfall, wenn `solarIndexOn` ungesetzt) |
+| `solarIndexOn`         | –           | Einschaltschwelle der Index-Hysterese (z. B. 8) |
+| `solarIndexOff`        | = `On`      | Ausschaltschwelle der Index-Hysterese (z. B. 3) |
 
 ### Allgemein
 | Attribut   | Default | Beschreibung |
@@ -301,6 +309,9 @@ attr poolControl heatpumpTempCmd   temperatur
 attr poolControl wpStartTime       09:00
 attr poolControl wpEndTime         22:00
 attr poolControl solarIndexMin     1
+# Index-Hysterese: WP an ab Index 8, aus erst bei Index <= 3
+attr poolControl solarIndexOn      8
+attr poolControl solarIndexOff     3
 
 # Sollwerte
 set poolControl targetTemp   30
