@@ -31,7 +31,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.6.0
+# Version:  v0.7.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -61,52 +61,52 @@ sub PoolControl_Initialize {
 
     $hash->{AttrList} =
           "disable:0,1 "
-        . "interval "
+        . "interval:textField "
         # --- Sensoren (Format: <Gerät>:<Reading>) ---
-        . "poolSensor "
-        . "inflowSensor "
-        . "solarIndexSensor "
-        . "qualitySensor "
+        . "poolSensor:textField "
+        . "inflowSensor:textField "
+        . "solarIndexSensor:textField "
+        . "qualitySensor:textField "
         # --- Filterpumpe ---
-        . "filterSwitch "
-        . "filterStateReading "
-        . "filterOnRegex "
-        . "filterOnCmd "
-        . "filterOffCmd "
-        . "filterNightStart "
-        . "filterNightEnd "
+        . "filterSwitch:textField "
+        . "filterStateReading:textField "
+        . "filterOnRegex:textField "
+        . "filterOnCmd:textField "
+        . "filterOffCmd:textField "
+        . "filterNightStart:textField "
+        . "filterNightEnd:textField "
         # --- Umrühren / Durchmischung ---
-        . "mixThreshold "
-        . "mixInterval "
-        . "mixDuration "
+        . "mixThreshold:slider,0,0.5,10 "
+        . "mixInterval:slider,0,60,7200 "
+        . "mixDuration:slider,0,30,1800 "
         # --- Solarthermie ---
-        . "solarSwitch "
-        . "solarStateReading "
-        . "solarOnRegex "
-        . "solarOnCmd "
-        . "solarOffCmd "
-        . "solarHysteresis "
-        . "solarSettleTime "
-        . "solarRetryDelay "
-        . "circulationLoss "
-        . "solarStartTime "
-        . "solarEndTime "
-        . "solarEnable "
-        . "solarEnableRegex "
-        . "solarEnableMin "
+        . "solarSwitch:textField "
+        . "solarStateReading:textField "
+        . "solarOnRegex:textField "
+        . "solarOnCmd:textField "
+        . "solarOffCmd:textField "
+        . "solarHysteresis:slider,0,0.1,5 "
+        . "solarSettleTime:slider,0,30,1800 "
+        . "solarRetryDelay:slider,0,60,7200 "
+        . "circulationLoss:slider,0,0.1,5 "
+        . "solarStartTime:textField "
+        . "solarEndTime:textField "
+        . "solarEnable:textField "
+        . "solarEnableRegex:textField "
+        . "solarEnableMin:textField "
         # --- Wärmepumpe ---
-        . "heatpumpSwitch "
-        . "heatpumpStateReading "
-        . "heatpumpOnRegex "
-        . "heatpumpOnCmd "
-        . "heatpumpOffCmd "
-        . "heatpumpOffset "
-        . "heatpumpTempCmd "
-        . "wpStartTime "
-        . "wpEndTime "
-        . "solarIndexMin "
-        . "solarIndexOn "
-        . "solarIndexOff "
+        . "heatpumpSwitch:textField "
+        . "heatpumpStateReading:textField "
+        . "heatpumpOnRegex:textField "
+        . "heatpumpOnCmd:textField "
+        . "heatpumpOffCmd:textField "
+        . "heatpumpOffset:slider,0,0.1,5 "
+        . "heatpumpTempCmd:textField "
+        . "wpStartTime:textField "
+        . "wpEndTime:textField "
+        . "solarIndexMin:textField "
+        . "solarIndexOn:textField "
+        . "solarIndexOff:textField "
         . $readingFnAttributes;
 }
 
@@ -122,7 +122,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.6.0";
+    $hash->{VERSION} = "0.7.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -793,50 +793,118 @@ sub PoolControl_dumpConfig {
   <a name="PoolControlset"></a>
   <b>Set</b>
   <ul>
-    <li><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren</li>
-    <li><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur</li>
-    <li><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag</li>
-    <li><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Temperatur</li>
-    <li><b>resetRuntime</b> &ndash; Tageslaufzeitzähler zurücksetzen</li>
-    <li><b>check</b> &ndash; Steuerzyklus sofort ausführen</li>
+    <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren</li>
+    <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte)</li>
+    <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag</li>
+    <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Temperatur (wird optional über <code>heatpumpTempCmd</code> durchgereicht)</li>
+    <li><a id="PoolControl-set-resetRuntime"></a><b>resetRuntime</b> &ndash; Tageslaufzeitzähler zurücksetzen</li>
+    <li><a id="PoolControl-set-check"></a><b>check</b> &ndash; Steuerzyklus sofort ausführen</li>
   </ul><br>
 
   <a name="PoolControlget"></a>
   <b>Get</b>
   <ul>
-    <li><b>config</b> &ndash; aktuelle Zuordnungen anzeigen</li>
+    <li><a id="PoolControl-get-config"></a><b>config</b> &ndash; aktuelle Zuordnungen anzeigen</li>
   </ul><br>
 
   <a name="PoolControlattr"></a>
   <b>Attribute</b>
   <ul>
-    <li><b>poolSensor</b> &lt;dev&gt;:&lt;reading&gt; &ndash; Pool-Wassertemperatur</li>
-    <li><b>inflowSensor</b> &lt;dev&gt;:&lt;reading&gt; &ndash; Temperatur des einlaufenden Wassers</li>
-    <li><b>solarIndexSensor</b> &lt;dev&gt;:&lt;reading&gt; &ndash; Solarindex (Stromüberschuss)</li>
-    <li><b>qualitySensor</b> &lt;dev&gt; &ndash; optionaler Wasserqualitätssensor (z. B. BLEYC01)</li>
-    <li><b>filterSwitch</b>, <b>filterStateReading</b>, <b>filterOnRegex</b>, <b>filterOnCmd</b>, <b>filterOffCmd</b> &ndash; Filterpumpe</li>
-    <li><b>filterNightStart</b>, <b>filterNightEnd</b> &ndash; Nachtfilterfenster (Default 22:00&ndash;06:00)</li>
-    <li><b>mixThreshold</b> &ndash; ab <code>Soll - mixThreshold</code> °C wird umgerührt (Default 2)</li>
-    <li><b>mixInterval</b> &ndash; Mindestabstand zwischen Mix-Zyklen ohne Zirkulation in Sekunden, 0 = aus (Default 3600)</li>
-    <li><b>mixDuration</b> &ndash; Dauer eines Mix-Zyklus in Sekunden (Default 300)</li>
-    <li><b>solarSwitch</b>, <b>solarStateReading</b>, <b>solarOnRegex</b>, <b>solarOnCmd</b>, <b>solarOffCmd</b> &ndash; Solarthermie-Pumpe</li>
-    <li><b>solarHysteresis</b> &ndash; Mindest-Übertemperatur des Einlaufwassers (Default 0.5)</li>
-    <li><b>solarSettleTime</b> &ndash; Wartezeit nach Solar-Anlauf vor Auskühlschutz-Prüfung (Sekunden, Default 180)</li>
-    <li><b>solarRetryDelay</b> &ndash; Sperrzeit nach Abschaltung wegen Auskühlung (Sekunden, Default 1800)</li>
-    <li><b>circulationLoss</b> &ndash; Wärmeverlust beim Umwälzen, wenn die WP aus ist; wird im Auskühlschutz als Toleranz auf das Einlaufwasser addiert (Default 0.3)</li>
-    <li><b>solarStartTime</b>, <b>solarEndTime</b> &ndash; Zeitfenster, in dem ein Solar-Anlaufversuch erlaubt ist (leer = ganztags)</li>
-    <li><b>solarEnable</b> &lt;dev&gt;:&lt;reading&gt; &ndash; optionale externe Freigabe für Solar (z. B. PV-Überschuss oder Kollektortemperatur). Ohne <code>solarEnableMin</code> wird gegen <code>solarEnableRegex</code> geprüft, sonst numerisch (&ge; Min)</li>
-    <li><b>solarEnableRegex</b> &ndash; Regex für die Freigabe bei boolschem Reading (Default <code>on|ON|1</code>)</li>
-    <li><b>solarEnableMin</b> &ndash; Mindestwert für die Freigabe bei numerischem Reading (z. B. Watt oder °C); leer = Regex-Auswertung</li>
-    <li><b>heatpumpSwitch</b>, <b>heatpumpStateReading</b>, <b>heatpumpOnRegex</b>, <b>heatpumpOnCmd</b>, <b>heatpumpOffCmd</b> &ndash; Wärmepumpe</li>
-    <li><b>heatpumpOffset</b> &ndash; Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; heatpumpTemp) und fließt in <code>heatpumpEffective</code> ein (Default 0.5)</li>
-    <li><b>heatpumpTempCmd</b> &ndash; set-Kommando, mit dem die mitgeteilte Temperatur an das WP-Gerät durchgereicht wird (z. B. <code>temperatur</code>)</li>
-    <li><b>wpStartTime</b>, <b>wpEndTime</b> &ndash; Zeitfenster der Wärmepumpe (Default 09:00&ndash;22:00)</li>
-    <li><b>solarIndexMin</b> &ndash; Mindest-Solarindex für WP-Betrieb; Rückfall-Default, wenn <code>solarIndexOn</code> nicht gesetzt ist (Default 1)</li>
-    <li><b>solarIndexOn</b> &ndash; Solarindex, ab dem die WP freigegeben wird (Einschaltschwelle der Hysterese)</li>
-    <li><b>solarIndexOff</b> &ndash; Solarindex, bei dem die WP wieder gesperrt wird; dazwischen wird der Zustand gehalten (Ausschaltschwelle, Default = solarIndexOn)</li>
-    <li><b>interval</b> &ndash; Steuerintervall in Sekunden (Default 60)</li>
-    <li><b>disable</b> 0|1</li>
+    <p><b>Sensoren (Format <code>&lt;Gerät&gt;:&lt;Reading&gt;</code>)</b></p>
+    <li><a id="PoolControl-attr-poolSensor"></a><b>poolSensor</b><br>
+        Typ: textField. Pool-Wassertemperatur.</li>
+    <li><a id="PoolControl-attr-inflowSensor"></a><b>inflowSensor</b><br>
+        Typ: textField. Temperatur des einlaufenden Wassers (gemeinsamer Rücklauf von Solar und WP).</li>
+    <li><a id="PoolControl-attr-solarIndexSensor"></a><b>solarIndexSensor</b><br>
+        Typ: textField. Solarindex (verfügbarer Stromüberschuss) für die WP-Freigabe.</li>
+    <li><a id="PoolControl-attr-qualitySensor"></a><b>qualitySensor</b><br>
+        Typ: textField. Optionaler Wasserqualitätssensor (z. B. BLEYC01), nur informativ.</li>
+
+    <p><b>Filterpumpe</b></p>
+    <li><a id="PoolControl-attr-filterSwitch"></a><b>filterSwitch</b><br>
+        Typ: textField. Schaltgerät der Filterpumpe.</li>
+    <li><a id="PoolControl-attr-filterStateReading"></a><b>filterStateReading</b><br>
+        Typ: textField. Reading, das den Pumpenzustand führt (Default <code>state</code>).</li>
+    <li><a id="PoolControl-attr-filterOnRegex"></a><b>filterOnRegex</b><br>
+        Typ: textField. Regex, der den Ein-Zustand erkennt (Default <code>on|ON|1</code>).</li>
+    <li><a id="PoolControl-attr-filterOnCmd"></a><b>filterOnCmd</b><br>
+        Typ: textField. set-Kommando zum Einschalten (Default <code>on</code>).</li>
+    <li><a id="PoolControl-attr-filterOffCmd"></a><b>filterOffCmd</b><br>
+        Typ: textField. set-Kommando zum Ausschalten (Default <code>off</code>).</li>
+    <li><a id="PoolControl-attr-filterNightStart"></a><b>filterNightStart</b><br>
+        Typ: textField (HH:MM). Beginn des Nachtfilterfensters (Default 22:00).</li>
+    <li><a id="PoolControl-attr-filterNightEnd"></a><b>filterNightEnd</b><br>
+        Typ: textField (HH:MM). Ende des Nachtfilterfensters; hier wechselt auch der Filtertag (Default 06:00).</li>
+
+    <p><b>Umrühren / Durchmischung</b></p>
+    <li><a id="PoolControl-attr-mixThreshold"></a><b>mixThreshold</b><br>
+        Typ: Slider (0–10 °C). Ab <code>Soll - mixThreshold</code> °C wird umgerührt (Default 2).</li>
+    <li><a id="PoolControl-attr-mixInterval"></a><b>mixInterval</b><br>
+        Typ: Slider (0–7200 s). Mindestabstand zwischen Mix-Zyklen ohne Zirkulation; 0 = aus (Default 3600).</li>
+    <li><a id="PoolControl-attr-mixDuration"></a><b>mixDuration</b><br>
+        Typ: Slider (0–1800 s). Dauer eines Mix-Zyklus (Default 300).</li>
+
+    <p><b>Solarthermie</b></p>
+    <li><a id="PoolControl-attr-solarSwitch"></a><b>solarSwitch</b><br>
+        Typ: textField. Schaltgerät der Solarthermie-Pumpe.</li>
+    <li><a id="PoolControl-attr-solarStateReading"></a><b>solarStateReading</b><br>
+        Typ: textField. Reading des Pumpenzustands (Default <code>state</code>).</li>
+    <li><a id="PoolControl-attr-solarOnRegex"></a><b>solarOnRegex</b><br>
+        Typ: textField. Regex für den Ein-Zustand (Default <code>on|ON|1</code>).</li>
+    <li><a id="PoolControl-attr-solarOnCmd"></a><b>solarOnCmd</b><br>
+        Typ: textField. set-Kommando zum Einschalten (Default <code>on</code>).</li>
+    <li><a id="PoolControl-attr-solarOffCmd"></a><b>solarOffCmd</b><br>
+        Typ: textField. set-Kommando zum Ausschalten (Default <code>off</code>).</li>
+    <li><a id="PoolControl-attr-solarHysteresis"></a><b>solarHysteresis</b><br>
+        Typ: Slider (0–5 °C). Mindest-Übertemperatur des Einlaufwassers gegenüber dem Pool (Default 0.5).</li>
+    <li><a id="PoolControl-attr-solarSettleTime"></a><b>solarSettleTime</b><br>
+        Typ: Slider (0–1800 s). Wartezeit nach Solar-Anlauf vor der Auskühlschutz-Prüfung (Default 180).</li>
+    <li><a id="PoolControl-attr-solarRetryDelay"></a><b>solarRetryDelay</b><br>
+        Typ: Slider (0–7200 s). Sperrzeit nach Abschaltung wegen Auskühlung (Default 1800).</li>
+    <li><a id="PoolControl-attr-circulationLoss"></a><b>circulationLoss</b><br>
+        Typ: Slider (0–5 °C). Wärmeverlust beim Umwälzen, wenn die WP aus ist; wird im Auskühlschutz als Toleranz auf das Einlaufwasser addiert (Default 0.3).</li>
+    <li><a id="PoolControl-attr-solarStartTime"></a><b>solarStartTime</b><br>
+        Typ: textField (HH:MM). Beginn des Zeitfensters, in dem ein Solar-Anlaufversuch erlaubt ist (leer = ganztags).</li>
+    <li><a id="PoolControl-attr-solarEndTime"></a><b>solarEndTime</b><br>
+        Typ: textField (HH:MM). Ende des Solar-Zeitfensters (leer = ganztags).</li>
+    <li><a id="PoolControl-attr-solarEnable"></a><b>solarEnable</b><br>
+        Typ: textField (<code>&lt;dev&gt;:&lt;reading&gt;</code>). Optionale externe Freigabe für Solar (z. B. PV-Überschuss oder Kollektortemperatur). Ohne <code>solarEnableMin</code> wird gegen <code>solarEnableRegex</code> geprüft, sonst numerisch (&ge; Min).</li>
+    <li><a id="PoolControl-attr-solarEnableRegex"></a><b>solarEnableRegex</b><br>
+        Typ: textField. Regex für die Freigabe bei boolschem Reading (Default <code>on|ON|1</code>).</li>
+    <li><a id="PoolControl-attr-solarEnableMin"></a><b>solarEnableMin</b><br>
+        Typ: textField. Mindestwert für die Freigabe bei numerischem Reading (z. B. Watt oder °C); leer = Regex-Auswertung.</li>
+
+    <p><b>Wärmepumpe</b></p>
+    <li><a id="PoolControl-attr-heatpumpSwitch"></a><b>heatpumpSwitch</b><br>
+        Typ: textField. Schaltgerät der Wärmepumpe.</li>
+    <li><a id="PoolControl-attr-heatpumpStateReading"></a><b>heatpumpStateReading</b><br>
+        Typ: textField. Reading des WP-Zustands (Default <code>state</code>).</li>
+    <li><a id="PoolControl-attr-heatpumpOnRegex"></a><b>heatpumpOnRegex</b><br>
+        Typ: textField. Regex für den Ein-Zustand (Default <code>on|ON|1</code>).</li>
+    <li><a id="PoolControl-attr-heatpumpOnCmd"></a><b>heatpumpOnCmd</b><br>
+        Typ: textField. set-Kommando zum Einschalten (Default <code>on</code>).</li>
+    <li><a id="PoolControl-attr-heatpumpOffCmd"></a><b>heatpumpOffCmd</b><br>
+        Typ: textField. set-Kommando zum Ausschalten (Default <code>off</code>).</li>
+    <li><a id="PoolControl-attr-heatpumpOffset"></a><b>heatpumpOffset</b><br>
+        Typ: Slider (0–5 °C). Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; <code>heatpumpTemp</code>) und fließt in <code>heatpumpEffective</code> ein (Default 0.5).</li>
+    <li><a id="PoolControl-attr-heatpumpTempCmd"></a><b>heatpumpTempCmd</b><br>
+        Typ: textField. set-Kommando, mit dem die mitgeteilte Temperatur an das WP-Gerät durchgereicht wird (z. B. <code>temperatur</code>).</li>
+    <li><a id="PoolControl-attr-wpStartTime"></a><b>wpStartTime</b><br>
+        Typ: textField (HH:MM). Beginn des WP-Zeitfensters (Default 09:00).</li>
+    <li><a id="PoolControl-attr-wpEndTime"></a><b>wpEndTime</b><br>
+        Typ: textField (HH:MM). Ende des WP-Zeitfensters (Default 22:00).</li>
+    <li><a id="PoolControl-attr-solarIndexMin"></a><b>solarIndexMin</b><br>
+        Typ: textField. Mindest-Solarindex für WP-Betrieb; Rückfall-Default, wenn <code>solarIndexOn</code> nicht gesetzt ist (Default 1).</li>
+    <li><a id="PoolControl-attr-solarIndexOn"></a><b>solarIndexOn</b><br>
+        Typ: textField. Solarindex, ab dem die WP freigegeben wird (Einschaltschwelle der Hysterese).</li>
+    <li><a id="PoolControl-attr-solarIndexOff"></a><b>solarIndexOff</b><br>
+        Typ: textField. Solarindex, bei dem die WP wieder gesperrt wird; dazwischen wird der Zustand gehalten (Ausschaltschwelle, Default = <code>solarIndexOn</code>).</li>
+
+    <p><b>Allgemein</b></p>
+    <li><a id="PoolControl-attr-interval"></a><b>interval</b><br>
+        Typ: textField. Steuerintervall in Sekunden (Default 60).</li>
+    <li><a id="PoolControl-attr-disable"></a><b>disable</b> 0|1<br>
+        Steuerung anhalten.</li>
   </ul>
 </ul>
 
