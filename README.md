@@ -186,12 +186,14 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 ### Umrühren / Durchmischung
 Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool. Damit sich
 die Wärme verteilt (und der Pool-Sensor nicht vorzeitig „warm genug" meldet),
-zirkuliert der Filter in Sollnähe periodisch – auch ohne aktiven Heizbetrieb.
-Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
+zirkuliert der Filter periodisch, **sobald das Soll erreicht ist** (kein
+Heizbedarf mehr). Solange der Pool noch unter Soll liegt, wird **nicht** gerührt –
+Zirkulieren ohne Wärmezufuhr verteilt nichts und kühlt über den Umwälzverlust
+sogar leicht aus. Während ohnehin gefiltert/geheizt wird, ist kein separates
+Umrühren nötig.
 
 | Attribut       | Default | Beschreibung |
 |----------------|---------|--------------|
-| `mixThreshold` | `2`     | ab `Soll - mixThreshold` °C wird umgerührt |
 | `mixInterval`  | `3600`  | Mindestabstand zwischen Mix-Zyklen ohne Zirkulation (s); `0` = aus |
 | `mixDuration`  | `300`   | Dauer eines Mix-Zyklus (s) |
 
@@ -249,7 +251,7 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `solarIndex`         | aktueller Solarindex |
 | `heatingNeeded`      | yes/no |
 | `filterState`        | gewünschter Filterzustand on/off |
-| `filterReason`       | Grund (Solar / WP / Solar+WP / Nachtfilterung / Umruehren / kein Bedarf) |
+| `filterReason`       | Grund (Solar / WP / Solar+WP / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf) |
 | `filterRuntimeToday` | heutige Filterlaufzeit (Minuten) |
 | `filterRemaining`    | heute noch fehlende Filterzeit (Stunden) |
 | `mixState`           | idle/active – läuft gerade ein Umrühr-Zyklus? |

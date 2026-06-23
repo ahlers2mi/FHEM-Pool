@@ -31,7 +31,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.8.0
+# Version:  v0.8.1
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -76,7 +76,6 @@ sub PoolControl_Initialize {
         . "filterNightStart:textField "
         . "filterNightEnd:textField "
         # --- Umrühren / Durchmischung ---
-        . "mixThreshold:slider,0,0.5,10 "
         . "mixInterval:slider,0,60,7200 "
         . "mixDuration:slider,0,30,1800 "
         # --- Solarthermie ---
@@ -122,7 +121,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.8.0";
+    $hash->{VERSION} = "0.8.1";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -570,6 +569,13 @@ sub PoolControl_Control {
     my $solarHeating = ($solarActive && defined $inflowEff && defined $poolTemp
                         && $inflowEff > ($poolTemp + $hysteresis)) ? 1 : 0;
 
+    # Bei Heizbedarf festhalten, warum die Solarthermie nicht heizt (Auskühl-
+    # Sperre, außerhalb Solarfenster, keine Solarenergie …), damit lastDecision
+    # zusammen mit der WP-Begründung den Zustand "keine Quelle" erklärt.
+    if ($solarDev ne "" && $mode eq "auto" && $heatNeeded && !$solarHeating) {
+        push @reason, "Solar heizt nicht: $solarState";
+    }
+
     # ======================================================================
     # 2) Wärmepumpe (Inverter) – nur freigeben, Regelung macht die WP selbst.
     #    Freigabe: innerhalb des Zeitfensters und bei ausreichendem
@@ -636,19 +642,22 @@ sub PoolControl_Control {
     # --- Umrühren / Durchmischung ----------------------------------------
     # Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool.
     # Damit sich die Wärme verteilt (und der Sensor nicht vorzeitig
-    # "warm genug" meldet), wird in Sollnähe periodisch zirkuliert, auch
-    # wenn gerade nicht geheizt wird. (mixInterval = 0 schaltet das ab.)
+    # "warm genug" meldet), wird nach erreichtem Soll periodisch zirkuliert.
+    # Solange noch Heizbedarf besteht (Pool unter Soll), wird NICHT gemischt:
+    # Zirkulieren ohne Wärmezufuhr verteilt nichts und kühlt über den
+    # Umwälzverlust sogar leicht aus. (mixInterval = 0 schaltet das ab.)
     my $now2        = gettimeofday();
     my $mixInterval = AttrVal($name, "mixInterval",  3600) + 0;
     my $mixDuration = AttrVal($name, "mixDuration",  300)  + 0;
-    my $mixThresh   = AttrVal($name, "mixThreshold", 2)    + 0;
 
     # Solange der Filter (aus beliebigem Grund) läuft, wird ohnehin
     # durchmischt -> Mix-Timer zurücksetzen.
     $hash->{".mixLastRun"} = $now2 if ($filterOn);
 
-    my $nearTarget = (defined $poolTemp && $poolTemp >= ($target - $mixThresh)) ? 1 : 0;
-    my $mixActive  = 0;
+    # Nur mischen, wenn das Soll erreicht ist (kein Heizbedarf). Ohne
+    # Pooltemperatur-Sensor lässt sich das nicht beurteilen -> nicht mischen.
+    my $mayMix    = (defined $poolTemp && !$heatNeeded) ? 1 : 0;
+    my $mixActive = 0;
     if ($mixInterval > 0) {
         my $until = $hash->{".mixUntil"} // 0;
         if ($now2 < $until) {
@@ -660,7 +669,7 @@ sub PoolControl_Control {
         }
         # Neuen Mix-Zyklus starten, wenn fällig und nicht ohnehin gefiltert wird.
         my $last = $hash->{".mixLastRun"} // 0;
-        if (!$mixActive && !$heatActive && !$nightFill && $nearTarget
+        if (!$mixActive && !$heatActive && !$nightFill && $mayMix
             && ($now2 - $last) >= $mixInterval) {
             $hash->{".mixUntil"} = $now2 + $mixDuration;
             $mixActive = 1;
@@ -695,6 +704,7 @@ sub PoolControl_Control {
                        : $solarActive ? "Solar" : "WP")
         : $nightFill  ? "Nachtfilterung"
         : $mixActive  ? "Umruehren"
+        : $heatNeeded ? "Heizbedarf, keine Quelle"
         :               "kein Bedarf";
 
     # ======================================================================
@@ -875,8 +885,8 @@ sub PoolControl_dumpConfig {
         Typ: textField (HH:MM). Ende des Nachtfilterfensters; hier wechselt auch der Filtertag (Default 06:00).</li>
 
     <p><b>Umrühren / Durchmischung</b></p>
-    <li><a id="PoolControl-attr-mixThreshold"></a><b>mixThreshold</b><br>
-        Typ: Slider (0–10 °C). Ab <code>Soll - mixThreshold</code> °C wird umgerührt (Default 2).</li>
+    <li>Umgerührt wird nur, wenn das Soll erreicht ist (kein Heizbedarf), um die
+        oben gesammelte Wärme zu verteilen. Bei Heizbedarf wird nicht gemischt.</li>
     <li><a id="PoolControl-attr-mixInterval"></a><b>mixInterval</b><br>
         Typ: Slider (0–7200 s). Mindestabstand zwischen Mix-Zyklen ohne Zirkulation; 0 = aus (Default 3600).</li>
     <li><a id="PoolControl-attr-mixDuration"></a><b>mixDuration</b><br>
