@@ -30,10 +30,11 @@ Gesteuert werden:
 
 | Funktion        | Beschreibung |
 |-----------------|--------------|
-| **Filterung**   | Gewünschte Filterstunden pro Tag. Heizbetrieb zählt mit, Rest wird nachts nachgefiltert. |
-| **Heizung**     | Solltemperatur, geheizt über Solarthermie (Vorrang, kostenlos) und Wärmepumpe. |
-| **Auskühlschutz** | Solarthermie wird abgeschaltet, wenn das einlaufende Wasser kälter ist als der Pool. |
-| **Wärmepumpe**  | Inverter-WP, regelt selbst. Modul gibt sie nur frei (Zeitfenster + ausreichender Solarindex) und teilt die Zieltemperatur mit. |
+| **Filterung**   | Gewünschte Filterstunden pro Tag. WP-Betrieb zählt mit (läuft auf Filtergeschwindigkeit); Solar zählt **nicht** mit (eigener Kreis). Rest wird nachts nachgefiltert. |
+| **Heizung**     | Solltemperatur, geheizt über Solarthermie und Wärmepumpe – beide sonnengesteuert, arbeiten zusammen. |
+| **Filter & Solar** | Solar löst keine Filterung aus. Läuft **nur** Solar (ohne WP), bleibt der Filter **aus** → langsame Strömung, großer Temperaturhub. Bei WP-Betrieb läuft der Filter mit, Solar wird dann an einer kleineren Schwelle bewertet. |
+| **Auskühlschutz** | Solarpumpe wird abgeschaltet, wenn der nutzbare Solarhub die (flussabhängige) Schwelle unterschreitet; WP-Beitrag wird abgezogen, WP-Anlaufphase ausgespart. |
+| **Wärmepumpe**  | Inverter-WP, regelt selbst. Modul gibt sie nur frei (Zeitfenster + ausreichender Solarindex) und teilt die Zieltemperatur mit. Bei WP-Betrieb läuft der Filter mit. |
 | **Wasserqualität** | Optionaler Sensor (z. B. BLE-YC01), nur informativ, blockiert die Steuerung nicht. |
 
 ---
@@ -43,8 +44,10 @@ Gesteuert werden:
 ### Filterung
 Über `set <name> filterHours <h>` wird die gewünschte Filterzeit pro Tag
 vorgegeben. Das Modul summiert die tatsächliche Filterlaufzeit (`filterRuntimeToday`).
-Da der Filter beim Heizen (Solar/WP) ohnehin läuft, wird diese Zeit angerechnet.
-Fehlt am Tagesende noch Laufzeit, wird im Nachtfenster
+Die Wärmepumpe läuft auf Filtergeschwindigkeit, der Filter läuft bei WP-Betrieb
+also ohnehin mit und diese Zeit wird angerechnet. Die **Solarthermie zählt nicht**:
+sie hat einen eigenen, langsamen Kreis und läuft bewusst **ohne** Filterpumpe
+(s. u.). Fehlt am Tagesende noch Laufzeit, wird im Nachtfenster
 (`filterNightStart`–`filterNightEnd`, Default 22:00–06:00) nachgefiltert, bis das
 Tagessoll erreicht ist.
 
@@ -58,10 +61,29 @@ Tagessoll erreicht ist.
 
 ### Solarthermie (Auskühlschutz)
 Bei Heizbedarf (`poolTemp < Soll`) wird die Solarpumpe als Anlaufversuch
-eingeschaltet. Nach `solarSettleTime` (Default 180 s) wird geprüft, ob das
-einlaufende Wasser (`inflowSensor`) um mindestens `solarHysteresis` (Default
-0,5 °C) wärmer ist als der Pool. Ist es kälter, wird die Pumpe wieder
-abgeschaltet (Auskühlschutz) und für `solarRetryDelay` (Default 1800 s) gesperrt.
+eingeschaltet. Nach `solarSettleTime` (Default 180 s, deckt die ~2 min Umlaufzeit
+des Solarkreises ab) wird geprüft, ob der **nutzbare Solarhub** des einlaufenden
+Wassers (`inflowSensor`) die geforderte Schwelle erreicht. Tut er das nicht, wird
+die Pumpe wieder abgeschaltet (Auskühlschutz) und für `solarRetryDelay`
+(Default 1800 s) gesperrt.
+
+> **Flussabhängige Schwelle:** Solar erreicht nur bei **langsamer Strömung** einen
+> großen Temperaturhub; läuft die Filterpumpe mit, steigt die
+> Durchflussgeschwindigkeit und der Hub bricht ein. Daher hängt die geforderte
+> Mindest-Übertemperatur vom Filterzustand ab:
+> - **Filter aus** (Solar-only, langsam): `solarHysteresis` (Default **0,5 °C**).
+> - **Filter an** (schnelle Strömung): `solarHysteresisFilter` (Default **0,1 °C**).
+>
+> Solar löst selbst **keine** Filterung aus. Läuft nur Solar, bleibt der Filter
+> aus (großer Hub). Die WP arbeitet unabhängig; sobald sie filtert, gilt für
+> Solar automatisch die kleinere Schwelle.
+
+> **WP-Beitrag & Anlaufphase:** Läuft die WP aktiv (Pool unter `heatpumpTemp`),
+> hebt sie das Einlaufwasser um ~`heatpumpOffset` (Default **0,9 °C**); dieser
+> Anteil wird abgezogen, damit nur die echte Solarwärme zählt. Die WP braucht
+> aber ~3 min bis zur vollen Leistung (`heatpumpRampTime`, Default 180 s) – in
+> dieser Zeit bricht das Solarwasser kurz ein, daher wird der Auskühlschutz
+> währenddessen ausgesetzt.
 
 **Wann darf Solar überhaupt anlaufen?** Da es keinen Kollektorfühler gibt, weiß
 das Modul nicht von selbst, ob Wärme vom Dach kommt. Anlaufversuche lassen sich
@@ -80,24 +102,28 @@ Beide sind standardmäßig leer (kein Limit). Externe Geräte können zusätzlic
 `set <name> check` eine sofortige Neubewertung anstoßen; das Freigabe-Gerät wird
 automatisch in `NOTIFYDEV` aufgenommen.
 
-**Einlaufwasser korrigiert:** Da Solar und WP denselben Rücklauf speisen und das
-Wasser beim Umwälzen Wärme verliert, würde der reine Vergleich die Solarbewertung
-verfälschen. Das Einlaufwasser wird daher korrigiert, bevor es mit dem Pool
-verglichen wird:
+**Nutzbarer Solarhub:** Bewertet wird `inflowTemp − WP-Anteil − poolTemp` gegen
+die flussabhängige Schwelle (s. o.). Der WP-Anteil:
 
 - **WP an, Pool unter `heatpumpTemp`** (WP heizt aktiv): `heatpumpOffset`
-  (~0,5 °C, Mehrtemperatur der WP) wird **abgezogen** – sonst würde die WP-Wärme
-  fälschlich der Solarthermie gutgeschrieben.
-- **WP an, Pool über `heatpumpTemp`**: die Inverter-WP regelt ab, keine Korrektur.
-- **WP aus**: nur Umwälzverlust beim Filtern; `circulationLoss` (~0,3 °C) wird als
-  Toleranz **addiert**, sonst würde Solar wegen des reinen Umwälzverlusts
-  fälschlich abgeschaltet.
+  (~0,9 °C) wird **abgezogen** – sonst würde die WP-Wärme fälschlich der
+  Solarthermie gutgeschrieben und die Solarpumpe liefe durch den kalten
+  Kollektor weiter (Wärmeverlust). Etwas höher als der reale WP-Hub (~0,8 °C)
+  wählen.
+- **WP an, Pool über `heatpumpTemp`**: die Inverter-WP regelt ab, kein Abzug.
+- **WP aus**: kein Abzug; es zählt der reine Hub gegen die Schwelle (0,5 °C bei
+  Filter aus bzw. 0,1 °C bei laufendem Filter).
 
 ### Wärmepumpe (Inverter)
 Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
 Modul gibt sie daher nur **frei** und überlässt die Temperaturregelung der WP:
 - aktuelle Zeit liegt im Fenster `wpStartTime`–`wpEndTime` (Default 09:00–22:00),
 - der `solarIndex` reicht aus (genug Stromüberschuss).
+
+WP und Solar sind beide sonnengesteuert und arbeiten zusammen. Bei WP-Betrieb
+läuft die Filterpumpe mit (die WP arbeitet auf Filtergeschwindigkeit); die
+Solarthermie wird in diesem Fall an der kleineren Schwelle `solarHysteresisFilter`
+bewertet.
 
 **Solarindex-Hysterese:** Damit die WP an der Schwelle nicht flattert, wird sie
 erst ab `solarIndexOn` freigegeben und erst bei `solarIndexOff` wieder gesperrt;
@@ -144,7 +170,8 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 
 | Befehl                  | Beschreibung |
 |-------------------------|--------------|
-| `control on\|off`       | Steuerung aktivieren/deaktivieren |
+| `control on\|off`       | Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an) |
+| `mode auto\|forceOn\|forceOff` | Betriebsmodus: `forceOn` = Filter + WP zwangsweise heizen (ohne Zeitfenster/Solarindex; Solar bleibt automatisch mit Auskühlschutz), `forceOff` = Filter/Solar/WP zwangsweise aus, `auto` = zurück zur Automatik |
 | `targetTemp <°C>`       | Solltemperatur des Pools |
 | `filterHours <h>`       | gewünschte Filterstunden pro Tag |
 | `heatpumpTemp <°C>`     | der Wärmepumpe mitgeteilte Temperatur |
@@ -185,12 +212,14 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 ### Umrühren / Durchmischung
 Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool. Damit sich
 die Wärme verteilt (und der Pool-Sensor nicht vorzeitig „warm genug" meldet),
-zirkuliert der Filter in Sollnähe periodisch – auch ohne aktiven Heizbetrieb.
-Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
+zirkuliert der Filter periodisch, **sobald das Soll erreicht ist** (kein
+Heizbedarf mehr). Solange der Pool noch unter Soll liegt, wird **nicht** gerührt –
+Zirkulieren ohne Wärmezufuhr verteilt nichts und kühlt über den Umwälzverlust
+sogar leicht aus. Während ohnehin gefiltert/geheizt wird, ist kein separates
+Umrühren nötig.
 
 | Attribut       | Default | Beschreibung |
 |----------------|---------|--------------|
-| `mixThreshold` | `2`     | ab `Soll - mixThreshold` °C wird umgerührt |
 | `mixInterval`  | `3600`  | Mindestabstand zwischen Mix-Zyklen ohne Zirkulation (s); `0` = aus |
 | `mixDuration`  | `300`   | Dauer eines Mix-Zyklus (s) |
 
@@ -202,10 +231,10 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `solarOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `solarOnCmd`        | `on`        | Einschaltkommando |
 | `solarOffCmd`       | `off`       | Ausschaltkommando |
-| `solarHysteresis`   | `0.5`       | Mindest-Übertemperatur Einlaufwasser |
-| `solarSettleTime`   | `180`       | Wartezeit nach Anlauf vor Auskühlprüfung (s) |
+| `solarHysteresis`   | `0.5`       | geforderter Solarhub bei **Filter aus** (langsamer Kreis, °C) |
+| `solarHysteresisFilter` | `0.1`   | geforderter Solarhub bei **laufendem Filter** (schnelle Strömung, °C) |
+| `solarSettleTime`   | `180`       | Wartezeit nach Anlauf vor Auskühlprüfung (s; ~2 min Umlaufzeit) |
 | `solarRetryDelay`   | `1800`      | Sperrzeit nach Abschaltung wegen Auskühlung (s) |
-| `circulationLoss`   | `0.3`       | Umwälzverlust bei ausgeschalteter WP; Toleranz im Auskühlschutz (°C) |
 | `solarStartTime`    | – (leer)    | Beginn des Solar-Zeitfensters (HH:MM), leer = ganztags |
 | `solarEndTime`      | – (leer)    | Ende des Solar-Zeitfensters (HH:MM), leer = ganztags |
 | `solarEnable`       | – (leer)    | externe Freigabe `<dev>:<reading>` (PV-Überschuss, Kollektortemp., Wetter) |
@@ -220,7 +249,8 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
-| `heatpumpOffset`       | `0.5`       | Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool ≤ `heatpumpTemp`) und fließt in `heatpumpEffective` ein |
+| `heatpumpOffset`       | `0.9`       | Temperaturhub der WP (~0,8 °C real, etwas höher wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool ≤ `heatpumpTemp`) und fließt in `heatpumpEffective` ein |
+| `heatpumpRampTime`     | `180`       | Anlaufzeit der WP bis volle Leistung (s); währenddessen Auskühlschutz ausgesetzt |
 | `heatpumpTempCmd`      | –           | set-Kommando zum Durchreichen der WP-Temperatur (z. B. `temperatur`) |
 | `wpStartTime`          | `09:00`     | Beginn WP-Zeitfenster |
 | `wpEndTime`            | `22:00`     | Ende WP-Zeitfenster |
@@ -240,14 +270,15 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 
 | Reading              | Beschreibung |
 |----------------------|--------------|
-| `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit) |
+| `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit; Präfix `[forceOn]`/`[forceOff]` im Handbetrieb) |
+| `mode`               | Betriebsmodus (`auto`/`forceOn`/`forceOff`) |
 | `poolTemp`           | aktuelle Pooltemperatur |
 | `inflowTemp`         | Temperatur des einlaufenden Wassers |
 | `targetTemp`         | aktuelle Solltemperatur |
 | `solarIndex`         | aktueller Solarindex |
 | `heatingNeeded`      | yes/no |
 | `filterState`        | gewünschter Filterzustand on/off |
-| `filterReason`       | Grund (Solar / WP / Solar+WP / Nachtfilterung / Umruehren / kein Bedarf) |
+| `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. |
 | `filterRuntimeToday` | heutige Filterlaufzeit (Minuten) |
 | `filterRemaining`    | heute noch fehlende Filterzeit (Stunden) |
 | `mixState`           | idle/active – läuft gerade ein Umrühr-Zyklus? |
@@ -286,10 +317,10 @@ attr poolControl filterNightEnd      06:00
 attr poolControl solarSwitch       d_solarpumpe
 attr poolControl solarOnCmd        on
 attr poolControl solarOffCmd       off
-attr poolControl solarHysteresis   0.5
-attr poolControl solarSettleTime   180
-attr poolControl solarRetryDelay   1800
-attr poolControl circulationLoss   0.3
+attr poolControl solarHysteresis       0.5
+attr poolControl solarHysteresisFilter 0.1
+attr poolControl solarSettleTime       180
+attr poolControl solarRetryDelay       1800
 
 # Solar nur tagsüber und bei PV-Überschuss freigeben
 attr poolControl solarStartTime    09:00
@@ -304,7 +335,8 @@ attr poolControl solarEnable       MQTT2_Sonoff_POW_01:pooltrigger
 attr poolControl heatpumpSwitch    d_pool_wp
 attr poolControl heatpumpOnCmd     on
 attr poolControl heatpumpOffCmd    off
-attr poolControl heatpumpOffset    0.5
+attr poolControl heatpumpOffset    0.9
+attr poolControl heatpumpRampTime  180
 attr poolControl heatpumpTempCmd   temperatur
 attr poolControl wpStartTime       09:00
 attr poolControl wpEndTime         22:00
