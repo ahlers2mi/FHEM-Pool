@@ -19,9 +19,10 @@
 #     z. B. PV-Überschuss oder Kollektortemperatur) einschränken, damit die
 #     Pumpe nachts/ohne Sonne nicht sinnlos taktet.
 #   * Wärmepumpe (Inverter, regelt selbst): Das Modul gibt die WP nur frei
-#     (Zeitfenster wpStartTime/wpEndTime und ausreichender Solarindex,
-#     solarIndexMin = verfügbarer Stromüberschuss) und teilt ihr die
-#     Zieltemperatur mit. Die Leistungsregelung übernimmt die WP selbst.
+#     (Zeitfenster wpStartTime/wpEndTime und ausreichender Solarindex) und teilt
+#     ihr die Zieltemperatur mit. Der Solarindex (verfügbarer Stromüberschuss)
+#     wirkt mit Hysterese: Freigabe ab solarIndexOn, Sperre bei solarIndexOff,
+#     dazwischen Zustand halten. Die Leistungsregelung übernimmt die WP selbst.
 #   * Optionaler Wasserqualitätssensor (z. B. BLEYC01). Da dieser instabil
 #     laufen kann, ist er optional und blockiert die Steuerung nicht.
 #
@@ -30,7 +31,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.5.0
+# Version:  v0.6.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -104,6 +105,8 @@ sub PoolControl_Initialize {
         . "wpStartTime "
         . "wpEndTime "
         . "solarIndexMin "
+        . "solarIndexOn "
+        . "solarIndexOff "
         . $readingFnAttributes;
 }
 
@@ -119,7 +122,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.5.0";
+    $hash->{VERSION} = "0.6.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -556,10 +559,20 @@ sub PoolControl_Control {
     if ($hpDev ne "") {
         my $wpStart  = AttrVal($name, "wpStartTime", "09:00");
         my $wpEnd    = AttrVal($name, "wpEndTime",   "22:00");
-        my $indexMin = AttrVal($name, "solarIndexMin", 1) + 0;
+
+        # Solarindex-Hysterese: WP erst ab solarIndexOn freigeben und erst bei
+        # solarIndexOff wieder sperren; dazwischen Zustand halten (kein Flattern
+        # an der Schwelle). solarIndexMin dient als Rückfall-Default, solange
+        # solarIndexOn/Off nicht gesetzt sind.
+        my $idxOn  = AttrVal($name, "solarIndexOn",
+                     AttrVal($name, "solarIndexMin", 1)) + 0;
+        my $idxOff = AttrVal($name, "solarIndexOff", $idxOn) + 0;
 
         my $inWindow = PoolControl_inWindow($wpStart, $wpEnd);
-        my $indexOk  = ($index >= $indexMin) ? 1 : 0;
+        my $indexOk;
+        if    ($index >= $idxOn)  { $indexOk = 1; }     # genug Überschuss -> ein
+        elsif ($index <= $idxOff) { $indexOk = 0; }     # zu wenig -> aus
+        else                      { $indexOk = $wpOn; } # Halteband -> halten
 
         my $wpWant = ($inWindow && $indexOk) ? 1 : 0;
 
@@ -578,7 +591,7 @@ sub PoolControl_Control {
         # Begründung für den deaktivierten Zustand protokollieren.
         if (!$wpWant) {
             push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
-            push @reason, "WP aus: Solarindex zu niedrig ($index<$indexMin)"
+            push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
                 if ($inWindow && !$indexOk);
         }
     }
@@ -741,7 +754,8 @@ sub PoolControl_dumpConfig {
     for my $a (qw(poolSensor inflowSensor solarIndexSensor qualitySensor
                   filterSwitch solarSwitch heatpumpSwitch
                   solarStartTime solarEndTime solarEnable solarEnableMin
-                  wpStartTime wpEndTime solarIndexMin heatpumpOffset
+                  wpStartTime wpEndTime solarIndexMin solarIndexOn solarIndexOff
+                  heatpumpOffset
                   filterNightStart filterNightEnd interval)) {
         $out .= sprintf("  %-18s = %s\n", $a, AttrVal($name, $a, "(default)"));
     }
@@ -818,7 +832,9 @@ sub PoolControl_dumpConfig {
     <li><b>heatpumpOffset</b> &ndash; Mehrtemperatur der WP über ihrem Sollwert; wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; heatpumpTemp) und fließt in <code>heatpumpEffective</code> ein (Default 0.5)</li>
     <li><b>heatpumpTempCmd</b> &ndash; set-Kommando, mit dem die mitgeteilte Temperatur an das WP-Gerät durchgereicht wird (z. B. <code>temperatur</code>)</li>
     <li><b>wpStartTime</b>, <b>wpEndTime</b> &ndash; Zeitfenster der Wärmepumpe (Default 09:00&ndash;22:00)</li>
-    <li><b>solarIndexMin</b> &ndash; Mindest-Solarindex für WP-Betrieb (Default 1)</li>
+    <li><b>solarIndexMin</b> &ndash; Mindest-Solarindex für WP-Betrieb; Rückfall-Default, wenn <code>solarIndexOn</code> nicht gesetzt ist (Default 1)</li>
+    <li><b>solarIndexOn</b> &ndash; Solarindex, ab dem die WP freigegeben wird (Einschaltschwelle der Hysterese)</li>
+    <li><b>solarIndexOff</b> &ndash; Solarindex, bei dem die WP wieder gesperrt wird; dazwischen wird der Zustand gehalten (Ausschaltschwelle, Default = solarIndexOn)</li>
     <li><b>interval</b> &ndash; Steuerintervall in Sekunden (Default 60)</li>
     <li><b>disable</b> 0|1</li>
   </ul>
