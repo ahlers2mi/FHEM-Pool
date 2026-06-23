@@ -144,7 +144,8 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 
 | Befehl                  | Beschreibung |
 |-------------------------|--------------|
-| `control on\|off`       | Steuerung aktivieren/deaktivieren |
+| `control on\|off`       | Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an) |
+| `mode auto\|forceOn\|forceOff` | Betriebsmodus: `forceOn` = Filter + WP zwangsweise heizen (ohne Zeitfenster/Solarindex; Solar bleibt automatisch mit Auskühlschutz), `forceOff` = Filter/Solar/WP zwangsweise aus, `auto` = zurück zur Automatik |
 | `targetTemp <°C>`       | Solltemperatur des Pools |
 | `filterHours <h>`       | gewünschte Filterstunden pro Tag |
 | `heatpumpTemp <°C>`     | der Wärmepumpe mitgeteilte Temperatur |
@@ -240,7 +241,8 @@ Während ohnehin gefiltert/geheizt wird, ist kein separates Umrühren nötig.
 
 | Reading              | Beschreibung |
 |----------------------|--------------|
-| `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit) |
+| `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit; Präfix `[forceOn]`/`[forceOff]` im Handbetrieb) |
+| `mode`               | Betriebsmodus (`auto`/`forceOn`/`forceOff`) |
 | `poolTemp`           | aktuelle Pooltemperatur |
 | `inflowTemp`         | Temperatur des einlaufenden Wassers |
 | `targetTemp`         | aktuelle Solltemperatur |

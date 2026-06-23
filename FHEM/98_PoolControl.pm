@@ -31,7 +31,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.7.1
+# Version:  v0.8.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -122,13 +122,15 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.7.1";
+    $hash->{VERSION} = "0.8.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
     readingsBeginUpdate($hash);
     readingsBulkUpdate($hash, "controlActive",
         ReadingsVal($name, "controlActive", "on"));
+    readingsBulkUpdate($hash, "mode",
+        ReadingsVal($name, "mode", "auto"));
     readingsBulkUpdate($hash, "desiredTemperature",
         ReadingsVal($name, "desiredTemperature", 30));
     readingsBulkUpdate($hash, "filterHoursTarget",
@@ -164,6 +166,7 @@ sub PoolControl_Set {
 
     my $list =
           "control:on,off "
+        . "mode:auto,forceOn,forceOff "
         . "targetTemp:slider,10,0.5,40 "
         . "filterHours:slider,0,0.5,24 "
         . "heatpumpTemp:slider,10,0.5,40 "
@@ -174,6 +177,14 @@ sub PoolControl_Set {
         my $v = $args[0] // "";
         return "control needs on|off" if ($v ne "on" && $v ne "off");
         readingsSingleUpdate($hash, "controlActive", $v, 1);
+        PoolControl_Control($hash);
+        return undef;
+    }
+    elsif ($cmd eq "mode") {
+        my $v = $args[0] // "";
+        return "mode needs auto|forceOn|forceOff"
+            if ($v !~ /^(auto|forceOn|forceOff)$/);
+        readingsSingleUpdate($hash, "mode", $v, 1);
         PoolControl_Control($hash);
         return undef;
     }
@@ -395,6 +406,10 @@ sub PoolControl_Control {
     my $circLoss   = AttrVal($name, "circulationLoss", 0.3) + 0;
     my $hysteresis = AttrVal($name, "solarHysteresis", 0.5) + 0;
 
+    # Betriebsmodus: auto (Automatik), forceOn (Filter+WP zwangsweise heizen,
+    # Solar bleibt automatisch), forceOff (Filter/Solar/WP zwangsweise aus).
+    my $mode = ReadingsVal($name, "mode", "auto");
+
     # --- Schalter-/Statushelfer -------------------------------------------
     my $filterDev   = AttrVal($name, "filterSwitch", "");
     my $filterRd    = AttrVal($name, "filterStateReading", "state");
@@ -494,7 +509,14 @@ sub PoolControl_Control {
         }
         my $solarAllowed = ($inSolarWindow && $solEnergyOk) ? 1 : 0;
 
-        if (!$heatNeeded) {
+        if ($mode eq "forceOff") {
+            # Zwangsabschaltung -> Solarpumpe aus.
+            if ($solarOn) {
+                PoolControl_switch($solarDev, $solarOffCmd);
+            }
+            $solarState = "off (force off)";
+        }
+        elsif (!$heatNeeded) {
             # Pool warm genug -> Solar aus.
             if ($solarOn) {
                 PoolControl_switch($solarDev, $solarOffCmd);
@@ -574,11 +596,15 @@ sub PoolControl_Control {
         elsif ($index <= $idxOff) { $indexOk = 0; }     # zu wenig -> aus
         else                      { $indexOk = $wpOn; } # Halteband -> halten
 
-        my $wpWant = ($inWindow && $indexOk) ? 1 : 0;
+        # forceOn -> WP zwangsweise heizen (Gates übergehen), forceOff -> aus.
+        my $wpWant;
+        if    ($mode eq "forceOn")  { $wpWant = 1; }
+        elsif ($mode eq "forceOff") { $wpWant = 0; }
+        else { $wpWant = ($inWindow && $indexOk) ? 1 : 0; }
 
         if ($wpWant && !$wpOn) {
             PoolControl_switch($hpDev, $hpOnCmd);
-            $wpState = "on";
+            $wpState = ($mode eq "forceOn") ? "on (force on)" : "on";
         }
         elsif (!$wpWant && $wpOn) {
             PoolControl_switch($hpDev, $hpOffCmd);
@@ -588,8 +614,8 @@ sub PoolControl_Control {
             $wpState = $wpOn ? "on" : "off";
         }
 
-        # Begründung für den deaktivierten Zustand protokollieren.
-        if (!$wpWant) {
+        # Begründung für den deaktivierten Zustand protokollieren (nur Automatik).
+        if (!$wpWant && $mode eq "auto") {
             push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
             push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
                 if ($inWindow && !$indexOk);
@@ -641,23 +667,31 @@ sub PoolControl_Control {
         }
     }
 
-    my $wantFilter = ($heatActive || $nightFill || $mixActive) ? 1 : 0;
+    # forceOn -> Filter zwangsweise an, forceOff -> aus, sonst Automatik.
+    my $wantFilter;
+    if    ($mode eq "forceOn")  { $wantFilter = 1; }
+    elsif ($mode eq "forceOff") { $wantFilter = 0; }
+    else { $wantFilter = ($heatActive || $nightFill || $mixActive) ? 1 : 0; }
 
     if ($filterDev ne "") {
         if ($wantFilter && !$filterOn) {
             PoolControl_switch($filterDev, $filterOnCmd);
             $hash->{".filterByModule"} = 1;
         }
-        elsif (!$wantFilter && $filterOn && ($hash->{".filterByModule"} // 0)) {
-            # Nur abschalten, wenn das Modul den Filter selbst eingeschaltet hat
-            # (manuelle Schaltungen nicht überstimmen).
+        elsif (!$wantFilter && $filterOn
+               && (($hash->{".filterByModule"} // 0) || $mode eq "forceOff")) {
+            # Sonst nur abschalten, wenn das Modul den Filter selbst eingeschaltet
+            # hat (manuelle Schaltungen nicht überstimmen). Bei forceOff jedoch
+            # immer abschalten.
             PoolControl_switch($filterDev, $filterOffCmd);
             $hash->{".filterByModule"} = 0;
         }
     }
 
     my $filterReason =
-          $heatActive ? ($solarActive && $wpActive ? "Solar+WP"
+          $mode eq "forceOn"  ? "force on"
+        : $mode eq "forceOff" ? "force off"
+        : $heatActive ? ($solarActive && $wpActive ? "Solar+WP"
                        : $solarActive ? "Solar" : "WP")
         : $nightFill  ? "Nachtfilterung"
         : $mixActive  ? "Umruehren"
@@ -682,8 +716,9 @@ sub PoolControl_Control {
     my $poolTxt   = defined $poolTemp   ? sprintf("%.1f", $poolTemp)   : "?";
     my $inflowTxt = defined $inflowTemp ? sprintf("%.1f", $inflowTemp) : "?";
 
-    my $stateTxt = sprintf("Pool %s/Soll %.1f°C | Filter %s (%s) | %.1f/%sh",
-        $poolTxt, $target, ($wantFilter ? "on" : "off"),
+    my $modePrefix = ($mode ne "auto") ? "[$mode] " : "";
+    my $stateTxt = sprintf("%sPool %s/Soll %.1f°C | Filter %s (%s) | %.1f/%sh",
+        $modePrefix, $poolTxt, $target, ($wantFilter ? "on" : "off"),
         $filterReason, $runtimeSec / 3600, $filterTgt);
 
     readingsBeginUpdate($hash);
@@ -701,6 +736,7 @@ sub PoolControl_Control {
     readingsBulkUpdate($hash, "solarHeating",        $solarHeating ? "yes" : "no");
     readingsBulkUpdate($hash, "heatpumpState",       $wpState);
     readingsBulkUpdate($hash, "heatpumpEffective",   sprintf("%.1f", $hpEff));
+    readingsBulkUpdate($hash, "mode",                $mode);
     readingsBulkUpdate($hash, "quality",             $qualTxt) if ($qualTxt ne "");
     readingsBulkUpdate($hash, "lastDecision",        join("; ", @reason)) if (@reason);
     readingsBulkUpdate($hash, "state",               $stateTxt);
@@ -794,7 +830,8 @@ sub PoolControl_dumpConfig {
   <a id="PoolControl-set"></a>
   <b>Set</b>
   <ul>
-    <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren</li>
+    <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an)</li>
+    <li><a id="PoolControl-set-mode"></a><b>mode</b> auto|forceOn|forceOff &ndash; Betriebsmodus. <code>forceOn</code>: Filterpumpe und Wärmepumpe werden zwangsweise eingeschaltet (heizt sofort, ohne Zeitfenster/Solarindex); die Solarthermie läuft weiter automatisch (mit Auskühlschutz). <code>forceOff</code>: Filter, Solarpumpe und Wärmepumpe werden zwangsweise abgeschaltet. <code>auto</code>: zurück zur Automatik.</li>
     <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte)</li>
     <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag</li>
     <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Temperatur (wird optional über <code>heatpumpTempCmd</code> durchgereicht)</li>
