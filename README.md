@@ -30,10 +30,11 @@ Gesteuert werden:
 
 | Funktion        | Beschreibung |
 |-----------------|--------------|
-| **Filterung**   | Gewünschte Filterstunden pro Tag. Heizbetrieb zählt mit, Rest wird nachts nachgefiltert. |
+| **Filterung**   | Gewünschte Filterstunden pro Tag. WP-Betrieb zählt mit (läuft auf Filtergeschwindigkeit); Solar zählt **nicht** mit (eigener Kreis). Rest wird nachts nachgefiltert. |
 | **Heizung**     | Solltemperatur, geheizt über Solarthermie (Vorrang, kostenlos) und Wärmepumpe. |
+| **Solar-Vorrang** | Während Solar heizt, bleibt der Filter **aus** (langsame Strömung → großer Temperaturhub) und die WP wird zurückgestellt. |
 | **Auskühlschutz** | Solarthermie wird abgeschaltet, wenn das einlaufende Wasser kälter ist als der Pool. |
-| **Wärmepumpe**  | Inverter-WP, regelt selbst. Modul gibt sie nur frei (Zeitfenster + ausreichender Solarindex) und teilt die Zieltemperatur mit. |
+| **Wärmepumpe**  | Inverter-WP, regelt selbst. Modul gibt sie nur frei (Zeitfenster + ausreichender Solarindex + Solar läuft nicht) und teilt die Zieltemperatur mit. Bei WP-Betrieb läuft der Filter mit. |
 | **Wasserqualität** | Optionaler Sensor (z. B. BLE-YC01), nur informativ, blockiert die Steuerung nicht. |
 
 ---
@@ -43,8 +44,10 @@ Gesteuert werden:
 ### Filterung
 Über `set <name> filterHours <h>` wird die gewünschte Filterzeit pro Tag
 vorgegeben. Das Modul summiert die tatsächliche Filterlaufzeit (`filterRuntimeToday`).
-Da der Filter beim Heizen (Solar/WP) ohnehin läuft, wird diese Zeit angerechnet.
-Fehlt am Tagesende noch Laufzeit, wird im Nachtfenster
+Die Wärmepumpe läuft auf Filtergeschwindigkeit, der Filter läuft bei WP-Betrieb
+also ohnehin mit und diese Zeit wird angerechnet. Die **Solarthermie zählt nicht**:
+sie hat einen eigenen, langsamen Kreis und läuft bewusst **ohne** Filterpumpe
+(s. u.). Fehlt am Tagesende noch Laufzeit, wird im Nachtfenster
 (`filterNightStart`–`filterNightEnd`, Default 22:00–06:00) nachgefiltert, bis das
 Tagessoll erreicht ist.
 
@@ -62,6 +65,18 @@ eingeschaltet. Nach `solarSettleTime` (Default 180 s) wird geprüft, ob das
 einlaufende Wasser (`inflowSensor`) um mindestens `solarHysteresis` (Default
 0,5 °C) wärmer ist als der Pool. Ist es kälter, wird die Pumpe wieder
 abgeschaltet (Auskühlschutz) und für `solarRetryDelay` (Default 1800 s) gesperrt.
+
+> **Filter-Vorrang für Solar:** Die Solarthermie hat einen eigenen, langsamen
+> Kreis. Nur bei langsamer Strömung erreicht sie einen großen Temperaturhub
+> (mehrere °C); läuft die Filterpumpe mit, steigt die Durchflussgeschwindigkeit
+> und der Hub bricht auf Bruchteile eines Grades ein. Deshalb:
+> - Während die **Solarpumpe läuft, bleibt der Filter aus** (Solar löst keine
+>   Filterung aus).
+> - Die **WP wird zurückgestellt, solange Solar läuft** (die WP würde den Filter
+>   einschalten und damit den Solarertrag zunichtemachen).
+>
+> Reicht Solar nicht (Auskühlschutz, außerhalb Fenster, keine Sonne) und ist die
+> Solarpumpe aus, darf die WP übernehmen – dann läuft der Filter mit.
 
 **Wann darf Solar überhaupt anlaufen?** Da es keinen Kollektorfühler gibt, weiß
 das Modul nicht von selbst, ob Wärme vom Dach kommt. Anlaufversuche lassen sich
@@ -97,7 +112,11 @@ verglichen wird:
 Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
 Modul gibt sie daher nur **frei** und überlässt die Temperaturregelung der WP:
 - aktuelle Zeit liegt im Fenster `wpStartTime`–`wpEndTime` (Default 09:00–22:00),
-- der `solarIndex` reicht aus (genug Stromüberschuss).
+- der `solarIndex` reicht aus (genug Stromüberschuss),
+- die **Solarpumpe läuft nicht** (Solar hat Vorrang, s. o.).
+
+Bei WP-Betrieb läuft die Filterpumpe mit (die WP arbeitet auf
+Filtergeschwindigkeit).
 
 **Solarindex-Hysterese:** Damit die WP an der Schwelle nicht flattert, wird sie
 erst ab `solarIndexOn` freigegeben und erst bei `solarIndexOff` wieder gesperrt;
@@ -251,7 +270,7 @@ Umrühren nötig.
 | `solarIndex`         | aktueller Solarindex |
 | `heatingNeeded`      | yes/no |
 | `filterState`        | gewünschter Filterzustand on/off |
-| `filterReason`       | Grund (Solar / WP / Solar+WP / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf) |
+| `filterReason`       | Grund (Solar / Solar (Anlauf) / WP / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf). Bei `Solar` ist der Filter bewusst **aus**. |
 | `filterRuntimeToday` | heutige Filterlaufzeit (Minuten) |
 | `filterRemaining`    | heute noch fehlende Filterzeit (Stunden) |
 | `mixState`           | idle/active – läuft gerade ein Umrühr-Zyklus? |

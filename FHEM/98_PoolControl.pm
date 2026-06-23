@@ -4,24 +4,31 @@
 # FHEM-Modul zur Steuerung von Poolfilterung und Poolheizung.
 #
 # Funktionen:
-#   * Filterung: Vorgabe der gewünschten Filterstunden pro Tag. Heizbetrieb
-#     (Solarthermie / Wärmepumpe) zirkuliert das Wasser ohnehin und wird auf
-#     das Tagessoll angerechnet. Fehlt am Tagesende noch Laufzeit, wird in
-#     einem konfigurierbaren Nachtfenster nachgefiltert. Der Filtertag wechselt
-#     am Ende des Nachtfensters (filterNightEnd), damit das Nachfiltern über
+#   * Filterung: Vorgabe der gewünschten Filterstunden pro Tag. Die WP läuft
+#     auf Filtergeschwindigkeit, ihr Betrieb zirkuliert das Wasser also ohnehin
+#     und wird auf das Tagessoll angerechnet. Die Solarthermie hat einen
+#     eigenen, langsamen Kreis (Filter bleibt dabei aus, s. u.) und zählt NICHT
+#     auf das Filtersoll. Fehlt am Tagesende noch Laufzeit, wird in einem
+#     konfigurierbaren Nachtfenster nachgefiltert. Der Filtertag wechselt am
+#     Ende des Nachtfensters (filterNightEnd), damit das Nachfiltern über
 #     Mitternacht hinweg demselben Tag zugerechnet wird.
 #   * Solltemperatur (desiredTemperature) einstellbar.
-#   * Solarthermie mit Auskühlschutz: Beim Anlaufen wird nach einer Settle-Zeit
-#     geprüft, ob das einlaufende Wasser (inflowSensor) wärmer ist als der Pool.
-#     Ist es kälter, wird die Solarpumpe wieder abgeschaltet, damit der Pool
-#     nicht auskühlt. Anlaufversuche lassen sich optional auf ein Zeitfenster
+#   * Solarthermie mit Auskühlschutz und Filter-Vorrang: Solar erwärmt das
+#     Wasser nur bei langsamer Strömung wirksam (großer Temperaturhub); läuft
+#     die Filterpumpe mit, sackt der Hub stark ab. Daher bleibt der Filter
+#     während des Solarbetriebs aus, und die WP wird zurückgestellt, solange die
+#     Solarpumpe läuft. Beim Anlaufen wird nach einer Settle-Zeit geprüft, ob
+#     das einlaufende Wasser (inflowSensor) wärmer ist als der Pool. Ist es
+#     kälter, wird die Solarpumpe wieder abgeschaltet, damit der Pool nicht
+#     auskühlt. Anlaufversuche lassen sich optional auf ein Zeitfenster
 #     (solarStartTime/solarEndTime) und eine externe Freigabe (solarEnable,
 #     z. B. PV-Überschuss oder Kollektortemperatur) einschränken, damit die
 #     Pumpe nachts/ohne Sonne nicht sinnlos taktet.
 #   * Wärmepumpe (Inverter, regelt selbst): Das Modul gibt die WP nur frei
-#     (Zeitfenster wpStartTime/wpEndTime und ausreichender Solarindex) und teilt
-#     ihr die Zieltemperatur mit. Der Solarindex (verfügbarer Stromüberschuss)
-#     wirkt mit Hysterese: Freigabe ab solarIndexOn, Sperre bei solarIndexOff,
+#     (Zeitfenster wpStartTime/wpEndTime, ausreichender Solarindex und Solar
+#     läuft nicht) und teilt ihr die Zieltemperatur mit. Bei WP-Betrieb läuft
+#     die Filterpumpe mit. Der Solarindex (verfügbarer Stromüberschuss) wirkt
+#     mit Hysterese: Freigabe ab solarIndexOn, Sperre bei solarIndexOff,
 #     dazwischen Zustand halten. Die Leistungsregelung übernimmt die WP selbst.
 #   * Optionaler Wasserqualitätssensor (z. B. BLEYC01). Da dieser instabil
 #     laufen kann, ist er optional und blockiert die Steuerung nicht.
@@ -31,7 +38,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.8.1
+# Version:  v0.9.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -121,7 +128,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.8.1";
+    $hash->{VERSION} = "0.9.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -584,6 +591,7 @@ sub PoolControl_Control {
     #    ihre Leistung selbst und schaltet bei Erreichen der Temperatur ab.
     # ======================================================================
     my $wpState = "off";
+    my $wpWant  = 0;
     if ($hpDev ne "") {
         my $wpStart  = AttrVal($name, "wpStartTime", "09:00");
         my $wpEnd    = AttrVal($name, "wpEndTime",   "22:00");
@@ -602,11 +610,14 @@ sub PoolControl_Control {
         elsif ($index <= $idxOff) { $indexOk = 0; }     # zu wenig -> aus
         else                      { $indexOk = $wpOn; } # Halteband -> halten
 
+        # Solar-Vorrang: Solar erwärmt das Wasser nur bei langsamer Strömung
+        # ordentlich (~3°), die WP dagegen läuft auf Filtergeschwindigkeit. Solange
+        # die Solarpumpe läuft, MUSS der Filter aus bleiben (sonst sackt der
+        # Solarertrag auf ~0,4° ab). Also gibt die WP zurück, solange Solar läuft.
         # forceOn -> WP zwangsweise heizen (Gates übergehen), forceOff -> aus.
-        my $wpWant;
         if    ($mode eq "forceOn")  { $wpWant = 1; }
         elsif ($mode eq "forceOff") { $wpWant = 0; }
-        else { $wpWant = ($inWindow && $indexOk) ? 1 : 0; }
+        else { $wpWant = ($inWindow && $indexOk && !$solarActive) ? 1 : 0; }
 
         if ($wpWant && !$wpOn) {
             PoolControl_switch($hpDev, $hpOnCmd);
@@ -622,6 +633,8 @@ sub PoolControl_Control {
 
         # Begründung für den deaktivierten Zustand protokollieren (nur Automatik).
         if (!$wpWant && $mode eq "auto") {
+            push @reason, "WP zurueckgestellt: Solar laeuft (Filter muss aus bleiben)"
+                if ($inWindow && $indexOk && $solarActive);
             push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
             push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
                 if ($inWindow && !$indexOk);
@@ -630,7 +643,13 @@ sub PoolControl_Control {
     my $wpActive = PoolControl_isOn($hpDev, $hpRd, $hpOnRe);
 
     # ======================================================================
-    # 3) Filtersteuerung – Heizbetrieb wird angerechnet, Rest nachts.
+    # 3) Filtersteuerung
+    #    Der Filter läuft für die WP (braucht Filtergeschwindigkeit), für die
+    #    Nachtfilterung und zum Umrühren – NICHT für die Solarthermie: Solar
+    #    hat einen eigenen, langsamen Kreis und liefert nur bei abgeschaltetem
+    #    Filter den vollen Temperaturhub. Solar-Laufzeit zählt daher auch nicht
+    #    auf das Filtersoll; das Tagessoll wird allein über die Filterpumpe
+    #    (tags WP-Betrieb, sonst nachts) erfüllt.
     # ======================================================================
     my $heatActive = ($solarActive || $wpActive) ? 1 : 0;
 
@@ -677,10 +696,13 @@ sub PoolControl_Control {
     }
 
     # forceOn -> Filter zwangsweise an, forceOff -> aus, sonst Automatik.
+    # Solar löst KEINE Filterung aus (eigener langsamer Kreis); der Filter folgt
+    # dem WP-Wunsch (wpWant, damit beide im selben Zyklus starten), der
+    # Nachtfilterung und dem Umrühren.
     my $wantFilter;
     if    ($mode eq "forceOn")  { $wantFilter = 1; }
     elsif ($mode eq "forceOff") { $wantFilter = 0; }
-    else { $wantFilter = ($heatActive || $nightFill || $mixActive) ? 1 : 0; }
+    else { $wantFilter = ($wpWant || $nightFill || $mixActive) ? 1 : 0; }
 
     if ($filterDev ne "") {
         if ($wantFilter && !$filterOn) {
@@ -697,15 +719,18 @@ sub PoolControl_Control {
         }
     }
 
+    # Beschreibt die aktuelle Lage. Solar heizt mit abgeschaltetem Filter ->
+    # erscheint als "Solar" obwohl der Filter aus ist; die WP heizt mit Filter.
     my $filterReason =
           $mode eq "forceOn"  ? "force on"
         : $mode eq "forceOff" ? "force off"
-        : $heatActive ? ($solarActive && $wpActive ? "Solar+WP"
-                       : $solarActive ? "Solar" : "WP")
-        : $nightFill  ? "Nachtfilterung"
-        : $mixActive  ? "Umruehren"
-        : $heatNeeded ? "Heizbedarf, keine Quelle"
-        :               "kein Bedarf";
+        : $solarHeating ? "Solar"
+        : $wpActive     ? "WP"
+        : $solarActive  ? "Solar (Anlauf)"
+        : $nightFill    ? "Nachtfilterung"
+        : $mixActive    ? "Umruehren"
+        : $heatNeeded   ? "Heizbedarf, keine Quelle"
+        :                 "kein Bedarf";
 
     # ======================================================================
     # 4) Wasserqualität (optional, informativ)
@@ -823,11 +848,14 @@ sub PoolControl_dumpConfig {
 <h3>PoolControl</h3>
 <ul>
   Steuert Filterung und Heizung eines Pools. Die Filterlaufzeit pro Tag wird
-  vorgegeben; Heizbetrieb (Solarthermie/Wärmepumpe) wird auf das Tagessoll
-  angerechnet und der Rest nachts nachgefiltert. Die Solarthermie wird mit
-  Auskühlschutz betrieben (Abschaltung, wenn das einlaufende Wasser kälter ist
-  als der Pool). Die Wärmepumpe läuft nur im Zeitfenster und bei ausreichendem
-  Solarindex.
+  vorgegeben; WP-Betrieb läuft auf Filtergeschwindigkeit und wird auf das
+  Tagessoll angerechnet, der Rest wird nachts nachgefiltert. Die Solarthermie
+  hat einen eigenen, langsamen Kreis: während Solar heizt, bleibt der Filter
+  aus (sonst sackt der Solarertrag stark ab), und die WP wird zurückgestellt,
+  solange die Solarpumpe läuft. Solar-Laufzeit zählt nicht auf das Filtersoll.
+  Die Solarthermie wird mit Auskühlschutz betrieben (Abschaltung, wenn das
+  einlaufende Wasser kälter ist als der Pool). Die Wärmepumpe läuft nur im
+  Zeitfenster, bei ausreichendem Solarindex und wenn Solar gerade nicht läuft.
   <br><br>
 
   <a id="PoolControl-define"></a>
