@@ -31,7 +31,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.7.0
+# Version:  v0.7.1
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -122,7 +122,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.7.0";
+    $hash->{VERSION} = "0.7.1";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -768,11 +768,12 @@ sub PoolControl_dumpConfig {
 1;
 
 =pod
+=item device
 =item summary    Steuerung von Poolfilterung und Poolheizung (Solar + Wärmepumpe)
 =item summary_DE Steuerung von Poolfilterung und Poolheizung (Solar + Wärmepumpe)
 =begin html
 
-<a name="PoolControl"></a>
+<a id="PoolControl"></a>
 <h3>PoolControl</h3>
 <ul>
   Steuert Filterung und Heizung eines Pools. Die Filterlaufzeit pro Tag wird
@@ -783,14 +784,14 @@ sub PoolControl_dumpConfig {
   Solarindex.
   <br><br>
 
-  <a name="PoolControldefine"></a>
+  <a id="PoolControl-define"></a>
   <b>Define</b>
   <ul>
     <code>define &lt;name&gt; PoolControl</code><br>
     Alle Ein- und Ausgänge werden über Attribute zugeordnet.
   </ul><br>
 
-  <a name="PoolControlset"></a>
+  <a id="PoolControl-set"></a>
   <b>Set</b>
   <ul>
     <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren</li>
@@ -801,13 +802,13 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-set-check"></a><b>check</b> &ndash; Steuerzyklus sofort ausführen</li>
   </ul><br>
 
-  <a name="PoolControlget"></a>
+  <a id="PoolControl-get"></a>
   <b>Get</b>
   <ul>
     <li><a id="PoolControl-get-config"></a><b>config</b> &ndash; aktuelle Zuordnungen anzeigen</li>
   </ul><br>
 
-  <a name="PoolControlattr"></a>
+  <a id="PoolControl-attr"></a>
   <b>Attribute</b>
   <ul>
     <p><b>Sensoren (Format <code>&lt;Gerät&gt;:&lt;Reading&gt;</code>)</b></p>
