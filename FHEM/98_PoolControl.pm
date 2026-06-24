@@ -42,7 +42,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.9.1
+# Version:  v0.9.2
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -133,7 +133,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.9.1";
+    $hash->{VERSION} = "0.9.2";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -413,7 +413,9 @@ sub PoolControl_Control {
     my $filterTgt  = ReadingsNum($name, "filterHoursTarget",  0);
     my $hpTemp     = ReadingsNum($name, "heatpumpTemp",       0);
     my $hpOffset   = AttrVal($name, "heatpumpOffset", 0.9) + 0;
-    my $hpEff      = $hpTemp + $hpOffset;
+    # Erwartete Einlauftemperatur, die die WP liefert: aktuelle Pooltemperatur
+    # zzgl. Temperaturhub (heatpumpOffset). Nur sinnvoll mit Pool-Sensor.
+    my $hpEff      = defined $poolTemp ? ($poolTemp + $hpOffset) : undef;
     my $hyst       = AttrVal($name, "solarHysteresis",       0.5) + 0;
     my $hystFilter = AttrVal($name, "solarHysteresisFilter", 0.1) + 0;
     my $wpRampTime = AttrVal($name, "heatpumpRampTime",      180) + 0;
@@ -793,7 +795,8 @@ sub PoolControl_Control {
     readingsBulkUpdate($hash, "solarState",          $solarState);
     readingsBulkUpdate($hash, "solarHeating",        $solarHeating ? "yes" : "no");
     readingsBulkUpdate($hash, "heatpumpState",       $wpState);
-    readingsBulkUpdate($hash, "heatpumpEffective",   sprintf("%.1f", $hpEff));
+    readingsBulkUpdate($hash, "heatpumpEffective",
+        defined $hpEff ? sprintf("%.1f", $hpEff) : "?");
     readingsBulkUpdate($hash, "mode",                $mode);
     readingsBulkUpdate($hash, "quality",             $qualTxt) if ($qualTxt ne "");
     readingsBulkUpdate($hash, "lastDecision",        join("; ", @reason)) if (@reason);
@@ -987,7 +990,7 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-attr-heatpumpOffCmd"></a><b>heatpumpOffCmd</b><br>
         Typ: textField. set-Kommando zum Ausschalten (Default <code>off</code>).</li>
     <li><a id="PoolControl-attr-heatpumpOffset"></a><b>heatpumpOffset</b><br>
-        Typ: Slider (0–5 °C). Temperaturhub der WP (bei Filtergeschwindigkeit ~0,8 °C, daher etwas höher als Toleranz wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; <code>heatpumpTemp</code>) und fließt in <code>heatpumpEffective</code> ein. Zu niedrig gewählt würde Solar fälschlich als heizend gelten und Wärme über den kalten Kollektor verloren gehen (Default 0.9).</li>
+        Typ: Slider (0–5 °C). Temperaturhub der WP über der aktuellen Pooltemperatur (bei Filtergeschwindigkeit ~0,8 °C, daher etwas höher als Toleranz wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; <code>heatpumpTemp</code>) und ergibt die erwartete Einlauftemperatur <code>heatpumpEffective</code> = <code>poolTemp + heatpumpOffset</code>. Zu niedrig gewählt würde Solar fälschlich als heizend gelten und Wärme über den kalten Kollektor verloren gehen (Default 0.9).</li>
     <li><a id="PoolControl-attr-heatpumpRampTime"></a><b>heatpumpRampTime</b><br>
         Typ: Slider (0–1800 s). Anlaufzeit der WP bis zur vollen Leistung; in dieser Zeit bricht das Solarwasser kurz ein, daher wird der Auskühlschutz währenddessen ausgesetzt (Default 180).</li>
     <li><a id="PoolControl-attr-heatpumpTempCmd"></a><b>heatpumpTempCmd</b><br>
@@ -1008,6 +1011,54 @@ sub PoolControl_dumpConfig {
         Typ: textField. Steuerintervall in Sekunden (Default 60).</li>
     <li><a id="PoolControl-attr-disable"></a><b>disable</b> 0|1<br>
         Steuerung anhalten.</li>
+  </ul><br>
+
+  <a id="PoolControl-readings"></a>
+  <b>Readings</b>
+  <ul>
+    <p><b>Sollwerte / Betrieb</b> (per <code>set</code> gepflegt)</p>
+    <li><b>controlActive</b> &ndash; on|off: ob die Steuerung aktiv ist (<code>set control</code>).</li>
+    <li><b>mode</b> &ndash; auto|forceOn|forceOff: aktueller Betriebsmodus (<code>set mode</code>).</li>
+    <li><b>desiredTemperature</b> &ndash; eingestellte Solltemperatur in °C (<code>set targetTemp</code>).</li>
+    <li><b>filterHoursTarget</b> &ndash; gewünschte Filterstunden pro Tag (<code>set filterHours</code>).</li>
+    <li><b>heatpumpTemp</b> &ndash; der WP mitgeteilte Zieltemperatur in °C (<code>set heatpumpTemp</code>).</li>
+
+    <p><b>Messwerte</b></p>
+    <li><b>poolTemp</b> &ndash; aktuelle Pool-Wassertemperatur in °C (aus <code>poolSensor</code>; <code>?</code> wenn kein Sensor).</li>
+    <li><b>inflowTemp</b> &ndash; Temperatur des einlaufenden Wassers in °C (aus <code>inflowSensor</code>).</li>
+    <li><b>targetTemp</b> &ndash; aktuell wirksame Solltemperatur in °C (entspricht <code>desiredTemperature</code>).</li>
+    <li><b>solarIndex</b> &ndash; aktueller Solarindex (verfügbarer Stromüberschuss) aus <code>solarIndexSensor</code>.</li>
+    <li><b>heatingNeeded</b> &ndash; yes|no: besteht Heizbedarf (<code>poolTemp &lt; targetTemp</code>)?</li>
+
+    <p><b>Filter / Umrühren</b></p>
+    <li><b>filterState</b> &ndash; on|off: vom Modul gewünschter Filterzustand.</li>
+    <li><b>filterReason</b> &ndash; Begründung des Filterzustands: <code>WP+Solar</code>, <code>WP</code>,
+        <code>Solar</code> (Filter dabei bewusst aus), <code>Solar (Anlauf)</code>, <code>Nachtfilterung</code>,
+        <code>Umruehren</code>, <code>Heizbedarf, keine Quelle</code>, <code>kein Bedarf</code> bzw.
+        <code>force on</code>/<code>force off</code> im Handbetrieb.</li>
+    <li><b>filterRuntimeToday</b> &ndash; heutige Filterlaufzeit in Minuten (Tageswechsel bei <code>filterNightEnd</code>).</li>
+    <li><b>filterRemaining</b> &ndash; heute noch fehlende Filterzeit in Stunden.</li>
+    <li><b>mixState</b> &ndash; active|idle: läuft gerade ein Umrühr-Zyklus?</li>
+
+    <p><b>Solarthermie</b></p>
+    <li><b>solarState</b> &ndash; Zustand/Begründung der Solarpumpe, z. B. <code>on (heizt)</code>,
+        <code>on (Pruefphase)</code>, <code>on (WP-Anlauf)</code>, <code>off (zu kalt, Auskuehlschutz)</code>,
+        <code>off (Wartezeit nach Auskuehlung)</code>, <code>off (ausserhalb Solarfenster)</code>,
+        <code>off (keine Solarenergie)</code>, <code>off (Soll erreicht)</code>.</li>
+    <li><b>solarHeating</b> &ndash; yes|no: heizt die Solarthermie real (nutzbarer Solarhub über der flussabhängigen Schwelle bzw. WP-Anlaufphase)?</li>
+
+    <p><b>Wärmepumpe</b></p>
+    <li><b>heatpumpState</b> &ndash; Zustand der WP-Freigabe: <code>off</code>, <code>on</code>,
+        <code>on (force on)</code>.</li>
+    <li><b>heatpumpEffective</b> &ndash; erwartete Einlauftemperatur der WP in °C
+        (<code>poolTemp + heatpumpOffset</code>); Richtwert, wie warm das einlaufende
+        Wasser bei laufender WP sein sollte. Vergleich mit <code>inflowTemp</code> zeigt,
+        ob die WP wie erwartet liefert (<code>?</code> ohne Pool-Sensor).</li>
+
+    <p><b>Sonstige</b></p>
+    <li><b>quality</b> &ndash; Wasserqualität als <code>pH &lt;x&gt; / ORP &lt;y&gt;</code> (nur wenn <code>qualitySensor</code> Werte liefert).</li>
+    <li><b>lastDecision</b> &ndash; Klartext-Begründung der letzten Entscheidung (z. B. warum WP/Solar nicht laufen).</li>
+    <li><b>state</b> &ndash; Kurzüberblick: <code>[Modus] Pool x/Soll y°C | Filter on/off (Grund) | Laufzeit/Soll h</code>.</li>
   </ul>
 </ul>
 

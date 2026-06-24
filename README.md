@@ -133,8 +133,10 @@ Attribute nicht gesetzt, gilt der einfache Schwellwert `solarIndexMin`.
 
 Die der WP mitgeteilte Zieltemperatur wird per `set <name> heatpumpTemp <°C>`
 gesetzt und kann optional über `heatpumpTempCmd` an das WP-Gerät durchgereicht
-werden. Das Reading `heatpumpEffective` (= `heatpumpTemp + heatpumpOffset`) ist
-nur informativ und greift **nicht** mehr in die Schaltung ein.
+werden. Das Reading `heatpumpEffective` (= `poolTemp + heatpumpOffset`) zeigt die
+erwartete Einlauftemperatur bei laufender WP – ein Vergleich mit `inflowTemp`
+zeigt, ob die WP wie erwartet liefert. Es ist nur informativ und greift **nicht**
+in die Schaltung ein.
 
 ---
 
@@ -249,7 +251,7 @@ Umrühren nötig.
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
-| `heatpumpOffset`       | `0.9`       | Temperaturhub der WP (~0,8 °C real, etwas höher wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool ≤ `heatpumpTemp`) und fließt in `heatpumpEffective` ein |
+| `heatpumpOffset`       | `0.9`       | Temperaturhub der WP über der Pooltemperatur (~0,8 °C real, etwas höher wählen); im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool ≤ `heatpumpTemp`), ergibt `heatpumpEffective` = `poolTemp + heatpumpOffset` |
 | `heatpumpRampTime`     | `180`       | Anlaufzeit der WP bis volle Leistung (s); währenddessen Auskühlschutz ausgesetzt |
 | `heatpumpTempCmd`      | –           | set-Kommando zum Durchreichen der WP-Temperatur (z. B. `temperatur`) |
 | `wpStartTime`          | `09:00`     | Beginn WP-Zeitfenster |
@@ -271,7 +273,11 @@ Umrühren nötig.
 | Reading              | Beschreibung |
 |----------------------|--------------|
 | `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit; Präfix `[forceOn]`/`[forceOff]` im Handbetrieb) |
+| `controlActive`      | on/off – ist die Steuerung aktiv (`set control`)? |
 | `mode`               | Betriebsmodus (`auto`/`forceOn`/`forceOff`) |
+| `desiredTemperature` | eingestellte Solltemperatur (`set targetTemp`) |
+| `filterHoursTarget`  | gewünschte Filterstunden pro Tag (`set filterHours`) |
+| `heatpumpTemp`       | der WP mitgeteilte Zieltemperatur (`set heatpumpTemp`) |
 | `poolTemp`           | aktuelle Pooltemperatur |
 | `inflowTemp`         | Temperatur des einlaufenden Wassers |
 | `targetTemp`         | aktuelle Solltemperatur |
@@ -285,7 +291,7 @@ Umrühren nötig.
 | `solarState`         | Zustand/Begründung der Solarthermie |
 | `solarHeating`       | yes/no – heizt die Solarthermie real? |
 | `heatpumpState`      | on/off |
-| `heatpumpEffective`  | effektive WP-Temperatur (`heatpumpTemp + heatpumpOffset`) |
+| `heatpumpEffective`  | erwartete Einlauftemperatur der WP (`poolTemp + heatpumpOffset`); Vergleich mit `inflowTemp` zeigt, ob die WP liefert |
 | `quality`            | optionale Qualitätsinfo (pH/ORP) |
 | `lastDecision`       | letzte Entscheidungsbegründung |
 
