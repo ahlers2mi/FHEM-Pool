@@ -271,7 +271,11 @@ Umrühren nötig.
 | Reading              | Beschreibung |
 |----------------------|--------------|
 | `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit; Präfix `[forceOn]`/`[forceOff]` im Handbetrieb) |
+| `controlActive`      | on/off – ist die Steuerung aktiv (`set control`)? |
 | `mode`               | Betriebsmodus (`auto`/`forceOn`/`forceOff`) |
+| `desiredTemperature` | eingestellte Solltemperatur (`set targetTemp`) |
+| `filterHoursTarget`  | gewünschte Filterstunden pro Tag (`set filterHours`) |
+| `heatpumpTemp`       | der WP mitgeteilte Zieltemperatur (`set heatpumpTemp`) |
 | `poolTemp`           | aktuelle Pooltemperatur |
 | `inflowTemp`         | Temperatur des einlaufenden Wassers |
 | `targetTemp`         | aktuelle Solltemperatur |
