@@ -42,7 +42,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.9.2
+# Version:  v0.9.3
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -111,6 +111,7 @@ sub PoolControl_Initialize {
         . "heatpumpOnCmd:textField "
         . "heatpumpOffCmd:textField "
         . "heatpumpOffset:slider,0,0.1,5 "
+        . "heatpumpRegBand:slider,0,0.1,5 "
         . "heatpumpRampTime:slider,0,30,1800 "
         . "heatpumpTempCmd:textField "
         . "wpStartTime:textField "
@@ -133,7 +134,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.9.2";
+    $hash->{VERSION} = "0.9.3";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -413,9 +414,18 @@ sub PoolControl_Control {
     my $filterTgt  = ReadingsNum($name, "filterHoursTarget",  0);
     my $hpTemp     = ReadingsNum($name, "heatpumpTemp",       0);
     my $hpOffset   = AttrVal($name, "heatpumpOffset", 0.9) + 0;
-    # Erwartete Einlauftemperatur, die die WP liefert: aktuelle Pooltemperatur
-    # zzgl. Temperaturhub (heatpumpOffset). Nur sinnvoll mit Pool-Sensor.
-    my $hpEff      = defined $poolTemp ? ($poolTemp + $hpOffset) : undef;
+    my $hpRegBand  = AttrVal($name, "heatpumpRegBand", 0.5) + 0;
+    # Erwartete Einlauftemperatur, die die WP liefert. Bei voller Leistung
+    # (Pool deutlich unter Sollwert) hebt sie das Wasser um heatpumpOffset über
+    # die aktuelle Pooltemperatur. In Sollnähe regelt die Inverter-WP jedoch ab:
+    # sie heizt nur noch bis ~heatpumpTemp + heatpumpRegBand. Der kleinere der
+    # beiden Werte gilt. Nur sinnvoll mit Pool-Sensor.
+    my $hpEff;
+    if (defined $poolTemp) {
+        my $hpFull = $poolTemp + $hpOffset;       # voller Hub
+        my $hpCap  = $hpTemp   + $hpRegBand;       # Eigenregelung der WP
+        $hpEff = ($hpFull < $hpCap) ? $hpFull : $hpCap;
+    }
     my $hyst       = AttrVal($name, "solarHysteresis",       0.5) + 0;
     my $hystFilter = AttrVal($name, "solarHysteresisFilter", 0.1) + 0;
     my $wpRampTime = AttrVal($name, "heatpumpRampTime",      180) + 0;
@@ -466,13 +476,14 @@ sub PoolControl_Control {
     # Filterzustand ab:
     #   * Filter AUS (langsamer Solarkreis): großer Hub  -> solarHysteresis (0.5)
     #   * Filter AN  (schnelle Strömung):    kleiner Hub -> solarHysteresisFilter (0.1)
-    # Läuft die WP aktiv (Pool unter WP-Sollwert), hebt sie das einlaufende
-    # Wasser um ~heatpumpOffset; dieser Beitrag wird abgezogen, damit nur die
-    # echte Solarwärme bewertet wird. (Über dem WP-Sollwert regelt die Inverter-
-    # WP ab -> kein Abzug.)
+    # Läuft die WP, hebt sie das einlaufende Wasser auf die erwartete
+    # WP-Temperatur (hpEff, s. o.); dieser Beitrag über dem Pool wird abgezogen,
+    # damit nur die echte Solarwärme bewertet wird. In Sollnähe regelt die WP ab,
+    # der Beitrag schrumpft daher von ~heatpumpOffset bis auf 0 (Pool am oberen
+    # Rand des Regelbands).
     my $reqGain = $filterOn ? $hystFilter : $hyst;
-    my $wpAdj   = ($wpOn && defined $poolTemp && $poolTemp <= $hpTemp)
-                ? $hpOffset : 0;
+    my $wpAdj   = ($wpOn && defined $hpEff && defined $poolTemp && $hpEff > $poolTemp)
+                ? ($hpEff - $poolTemp) : 0;
     my $solarGain = (defined $inflowTemp && defined $poolTemp)
                   ? ($inflowTemp - $wpAdj - $poolTemp) : undef;
 
@@ -853,7 +864,7 @@ sub PoolControl_dumpConfig {
                   solarStartTime solarEndTime solarEnable solarEnableMin
                   solarHysteresis solarHysteresisFilter
                   wpStartTime wpEndTime solarIndexMin solarIndexOn solarIndexOff
-                  heatpumpOffset heatpumpRampTime
+                  heatpumpOffset heatpumpRegBand heatpumpRampTime
                   filterNightStart filterNightEnd interval)) {
         $out .= sprintf("  %-18s = %s\n", $a, AttrVal($name, $a, "(default)"));
     }
@@ -990,7 +1001,9 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-attr-heatpumpOffCmd"></a><b>heatpumpOffCmd</b><br>
         Typ: textField. set-Kommando zum Ausschalten (Default <code>off</code>).</li>
     <li><a id="PoolControl-attr-heatpumpOffset"></a><b>heatpumpOffset</b><br>
-        Typ: Slider (0–5 °C). Temperaturhub der WP über der aktuellen Pooltemperatur (bei Filtergeschwindigkeit ~0,8 °C, daher etwas höher als Toleranz wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; <code>heatpumpTemp</code>) und ergibt die erwartete Einlauftemperatur <code>heatpumpEffective</code> = <code>poolTemp + heatpumpOffset</code>. Zu niedrig gewählt würde Solar fälschlich als heizend gelten und Wärme über den kalten Kollektor verloren gehen (Default 0.9).</li>
+        Typ: Slider (0–5 °C). Temperaturhub der WP über der aktuellen Pooltemperatur bei voller Leistung (bei Filtergeschwindigkeit ~0,8 °C, daher etwas höher als Toleranz wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen und bestimmt die erwartete Einlauftemperatur <code>heatpumpEffective</code>. Zu niedrig gewählt würde Solar fälschlich als heizend gelten und Wärme über den kalten Kollektor verloren gehen (Default 0.9).</li>
+    <li><a id="PoolControl-attr-heatpumpRegBand"></a><b>heatpumpRegBand</b><br>
+        Typ: Slider (0–5 °C). Regelband der Inverter-WP: sie regelt zwischen <code>heatpumpTemp</code> und <code>heatpumpTemp + heatpumpRegBand</code> herunter und heizt nicht darüber hinaus. Begrenzt die erwartete Einlauftemperatur in Sollnähe (<code>heatpumpEffective = min(poolTemp + heatpumpOffset, heatpumpTemp + heatpumpRegBand)</code>) und damit den im Auskühlschutz abgezogenen WP-Beitrag (Default 0.5).</li>
     <li><a id="PoolControl-attr-heatpumpRampTime"></a><b>heatpumpRampTime</b><br>
         Typ: Slider (0–1800 s). Anlaufzeit der WP bis zur vollen Leistung; in dieser Zeit bricht das Solarwasser kurz ein, daher wird der Auskühlschutz währenddessen ausgesetzt (Default 180).</li>
     <li><a id="PoolControl-attr-heatpumpTempCmd"></a><b>heatpumpTempCmd</b><br>
@@ -1050,10 +1063,11 @@ sub PoolControl_dumpConfig {
     <p><b>Wärmepumpe</b></p>
     <li><b>heatpumpState</b> &ndash; Zustand der WP-Freigabe: <code>off</code>, <code>on</code>,
         <code>on (force on)</code>.</li>
-    <li><b>heatpumpEffective</b> &ndash; erwartete Einlauftemperatur der WP in °C
-        (<code>poolTemp + heatpumpOffset</code>); Richtwert, wie warm das einlaufende
-        Wasser bei laufender WP sein sollte. Vergleich mit <code>inflowTemp</code> zeigt,
-        ob die WP wie erwartet liefert (<code>?</code> ohne Pool-Sensor).</li>
+    <li><b>heatpumpEffective</b> &ndash; erwartete Einlauftemperatur der WP in °C:
+        <code>min(poolTemp + heatpumpOffset, heatpumpTemp + heatpumpRegBand)</code> –
+        voller Hub über dem Pool, in Sollnähe durch die Eigenregelung der WP gedeckelt.
+        Vergleich mit <code>inflowTemp</code> zeigt, ob die WP wie erwartet liefert
+        (<code>?</code> ohne Pool-Sensor).</li>
 
     <p><b>Sonstige</b></p>
     <li><b>quality</b> &ndash; Wasserqualität als <code>pH &lt;x&gt; / ORP &lt;y&gt;</code> (nur wenn <code>qualitySensor</code> Werte liefert).</li>
