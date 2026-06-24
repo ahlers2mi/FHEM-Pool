@@ -103,16 +103,19 @@ Beide sind standardmäßig leer (kein Limit). Externe Geräte können zusätzlic
 automatisch in `NOTIFYDEV` aufgenommen.
 
 **Nutzbarer Solarhub:** Bewertet wird `inflowTemp − WP-Anteil − poolTemp` gegen
-die flussabhängige Schwelle (s. o.). Der WP-Anteil:
+die flussabhängige Schwelle (s. o.). Der abgezogene WP-Anteil entspricht der
+erwarteten WP-Einlauftemperatur über dem Pool (`heatpumpEffective − poolTemp`):
 
-- **WP an, Pool unter `heatpumpTemp`** (WP heizt aktiv): `heatpumpOffset`
-  (~0,9 °C) wird **abgezogen** – sonst würde die WP-Wärme fälschlich der
-  Solarthermie gutgeschrieben und die Solarpumpe liefe durch den kalten
-  Kollektor weiter (Wärmeverlust). Etwas höher als der reale WP-Hub (~0,8 °C)
-  wählen.
-- **WP an, Pool über `heatpumpTemp`**: die Inverter-WP regelt ab, kein Abzug.
-- **WP aus**: kein Abzug; es zählt der reine Hub gegen die Schwelle (0,5 °C bei
-  Filter aus bzw. 0,1 °C bei laufendem Filter).
+- **Pool deutlich unter `heatpumpTemp`** (WP volle Leistung): voller Hub
+  `heatpumpOffset` (~0,9 °C, etwas höher als der reale ~0,8 °C). Zu niedrig
+  gewählt würde Solar fälschlich als heizend gelten und die Solarpumpe liefe
+  durch den kalten Kollektor weiter (Wärmeverlust).
+- **Pool in Sollnähe**: die Inverter-WP regelt zwischen `heatpumpTemp` und
+  `heatpumpTemp + heatpumpRegBand` (~0,5 °C) herunter. Der Beitrag schrumpft
+  entsprechend – Beispiel Pool 32 °C, `heatpumpTemp` 32: die WP liefert nur noch
+  ~32,5 °C, der abgezogene Anteil ist also nur ~0,5 °C statt 0,9 °C.
+- **Pool am oberen Rand des Regelbands / WP aus**: kein Abzug; es zählt der reine
+  Hub gegen die Schwelle (0,5 °C bei Filter aus bzw. 0,1 °C bei laufendem Filter).
 
 ### Wärmepumpe (Inverter)
 Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
@@ -133,10 +136,12 @@ Attribute nicht gesetzt, gilt der einfache Schwellwert `solarIndexMin`.
 
 Die der WP mitgeteilte Zieltemperatur wird per `set <name> heatpumpTemp <°C>`
 gesetzt und kann optional über `heatpumpTempCmd` an das WP-Gerät durchgereicht
-werden. Das Reading `heatpumpEffective` (= `poolTemp + heatpumpOffset`) zeigt die
-erwartete Einlauftemperatur bei laufender WP – ein Vergleich mit `inflowTemp`
-zeigt, ob die WP wie erwartet liefert. Es ist nur informativ und greift **nicht**
-in die Schaltung ein.
+werden. Das Reading `heatpumpEffective`
+(= `min(poolTemp + heatpumpOffset, heatpumpTemp + heatpumpRegBand)`) zeigt die
+erwartete Einlauftemperatur bei laufender WP – in Sollnähe durch die
+Eigenregelung der WP gedeckelt. Ein Vergleich mit `inflowTemp` zeigt, ob die WP
+wie erwartet liefert. Das Reading ist nur informativ; der gleiche Wert fließt
+aber als WP-Anteil in den Auskühlschutz ein.
 
 ---
 
@@ -251,7 +256,8 @@ Umrühren nötig.
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
-| `heatpumpOffset`       | `0.9`       | Temperaturhub der WP über der Pooltemperatur (~0,8 °C real, etwas höher wählen); im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool ≤ `heatpumpTemp`), ergibt `heatpumpEffective` = `poolTemp + heatpumpOffset` |
+| `heatpumpOffset`       | `0.9`       | voller Temperaturhub der WP über der Pooltemperatur (~0,8 °C real, etwas höher wählen); im Auskühlschutz abgezogen, bestimmt `heatpumpEffective` |
+| `heatpumpRegBand`      | `0.5`       | Regelband der Inverter-WP über `heatpumpTemp`; deckelt `heatpumpEffective` in Sollnähe (`min(poolTemp + offset, heatpumpTemp + regBand)`) |
 | `heatpumpRampTime`     | `180`       | Anlaufzeit der WP bis volle Leistung (s); währenddessen Auskühlschutz ausgesetzt |
 | `heatpumpTempCmd`      | –           | set-Kommando zum Durchreichen der WP-Temperatur (z. B. `temperatur`) |
 | `wpStartTime`          | `09:00`     | Beginn WP-Zeitfenster |
@@ -291,7 +297,7 @@ Umrühren nötig.
 | `solarState`         | Zustand/Begründung der Solarthermie |
 | `solarHeating`       | yes/no – heizt die Solarthermie real? |
 | `heatpumpState`      | on/off |
-| `heatpumpEffective`  | erwartete Einlauftemperatur der WP (`poolTemp + heatpumpOffset`); Vergleich mit `inflowTemp` zeigt, ob die WP liefert |
+| `heatpumpEffective`  | erwartete WP-Einlauftemperatur (`min(poolTemp + heatpumpOffset, heatpumpTemp + heatpumpRegBand)`); Vergleich mit `inflowTemp` zeigt, ob die WP liefert |
 | `quality`            | optionale Qualitätsinfo (pH/ORP) |
 | `lastDecision`       | letzte Entscheidungsbegründung |
 
@@ -342,6 +348,7 @@ attr poolControl heatpumpSwitch    d_pool_wp
 attr poolControl heatpumpOnCmd     on
 attr poolControl heatpumpOffCmd    off
 attr poolControl heatpumpOffset    0.9
+attr poolControl heatpumpRegBand   0.5
 attr poolControl heatpumpRampTime  180
 attr poolControl heatpumpTempCmd   temperatur
 attr poolControl wpStartTime       09:00
