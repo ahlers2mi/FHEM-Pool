@@ -42,7 +42,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.9.1
+# Version:  v0.9.2
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -133,7 +133,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.9.1";
+    $hash->{VERSION} = "0.9.2";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -413,7 +413,9 @@ sub PoolControl_Control {
     my $filterTgt  = ReadingsNum($name, "filterHoursTarget",  0);
     my $hpTemp     = ReadingsNum($name, "heatpumpTemp",       0);
     my $hpOffset   = AttrVal($name, "heatpumpOffset", 0.9) + 0;
-    my $hpEff      = $hpTemp + $hpOffset;
+    # Erwartete Einlauftemperatur, die die WP liefert: aktuelle Pooltemperatur
+    # zzgl. Temperaturhub (heatpumpOffset). Nur sinnvoll mit Pool-Sensor.
+    my $hpEff      = defined $poolTemp ? ($poolTemp + $hpOffset) : undef;
     my $hyst       = AttrVal($name, "solarHysteresis",       0.5) + 0;
     my $hystFilter = AttrVal($name, "solarHysteresisFilter", 0.1) + 0;
     my $wpRampTime = AttrVal($name, "heatpumpRampTime",      180) + 0;
@@ -793,7 +795,8 @@ sub PoolControl_Control {
     readingsBulkUpdate($hash, "solarState",          $solarState);
     readingsBulkUpdate($hash, "solarHeating",        $solarHeating ? "yes" : "no");
     readingsBulkUpdate($hash, "heatpumpState",       $wpState);
-    readingsBulkUpdate($hash, "heatpumpEffective",   sprintf("%.1f", $hpEff));
+    readingsBulkUpdate($hash, "heatpumpEffective",
+        defined $hpEff ? sprintf("%.1f", $hpEff) : "?");
     readingsBulkUpdate($hash, "mode",                $mode);
     readingsBulkUpdate($hash, "quality",             $qualTxt) if ($qualTxt ne "");
     readingsBulkUpdate($hash, "lastDecision",        join("; ", @reason)) if (@reason);
@@ -987,7 +990,7 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-attr-heatpumpOffCmd"></a><b>heatpumpOffCmd</b><br>
         Typ: textField. set-Kommando zum Ausschalten (Default <code>off</code>).</li>
     <li><a id="PoolControl-attr-heatpumpOffset"></a><b>heatpumpOffset</b><br>
-        Typ: Slider (0–5 °C). Temperaturhub der WP (bei Filtergeschwindigkeit ~0,8 °C, daher etwas höher als Toleranz wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; <code>heatpumpTemp</code>) und fließt in <code>heatpumpEffective</code> ein. Zu niedrig gewählt würde Solar fälschlich als heizend gelten und Wärme über den kalten Kollektor verloren gehen (Default 0.9).</li>
+        Typ: Slider (0–5 °C). Temperaturhub der WP über der aktuellen Pooltemperatur (bei Filtergeschwindigkeit ~0,8 °C, daher etwas höher als Toleranz wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen (solange Pool &le; <code>heatpumpTemp</code>) und ergibt die erwartete Einlauftemperatur <code>heatpumpEffective</code> = <code>poolTemp + heatpumpOffset</code>. Zu niedrig gewählt würde Solar fälschlich als heizend gelten und Wärme über den kalten Kollektor verloren gehen (Default 0.9).</li>
     <li><a id="PoolControl-attr-heatpumpRampTime"></a><b>heatpumpRampTime</b><br>
         Typ: Slider (0–1800 s). Anlaufzeit der WP bis zur vollen Leistung; in dieser Zeit bricht das Solarwasser kurz ein, daher wird der Auskühlschutz währenddessen ausgesetzt (Default 180).</li>
     <li><a id="PoolControl-attr-heatpumpTempCmd"></a><b>heatpumpTempCmd</b><br>
@@ -1047,8 +1050,10 @@ sub PoolControl_dumpConfig {
     <p><b>Wärmepumpe</b></p>
     <li><b>heatpumpState</b> &ndash; Zustand der WP-Freigabe: <code>off</code>, <code>on</code>,
         <code>on (force on)</code>.</li>
-    <li><b>heatpumpEffective</b> &ndash; effektive WP-Temperatur in °C (<code>heatpumpTemp + heatpumpOffset</code>);
-        Richtwert, welche Wassertemperatur die WP real liefert.</li>
+    <li><b>heatpumpEffective</b> &ndash; erwartete Einlauftemperatur der WP in °C
+        (<code>poolTemp + heatpumpOffset</code>); Richtwert, wie warm das einlaufende
+        Wasser bei laufender WP sein sollte. Vergleich mit <code>inflowTemp</code> zeigt,
+        ob die WP wie erwartet liefert (<code>?</code> ohne Pool-Sensor).</li>
 
     <p><b>Sonstige</b></p>
     <li><b>quality</b> &ndash; Wasserqualität als <code>pH &lt;x&gt; / ORP &lt;y&gt;</code> (nur wenn <code>qualitySensor</code> Werte liefert).</li>
