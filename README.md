@@ -179,7 +179,7 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 |-------------------------|--------------|
 | `control on\|off`       | Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an) |
 | `mode auto\|forceOn\|forceOff` | Betriebsmodus: `forceOn` = Filter + WP zwangsweise heizen (ohne Zeitfenster/Solarindex; Solar bleibt automatisch mit Auskühlschutz), `forceOff` = Filter/Solar/WP zwangsweise aus, `auto` = zurück zur Automatik |
-| `targetTemp <°C>`       | Solltemperatur des Pools |
+| `targetTemp <°C>`       | Solltemperatur des Pools (wird von `targetTempSchedule` überschrieben, falls gesetzt) |
 | `filterHours <h>`       | gewünschte Filterstunden pro Tag |
 | `heatpumpTemp <°C>`     | der Wärmepumpe mitgeteilte Temperatur |
 | `resetRuntime`          | Tageslaufzeitzähler zurücksetzen |
@@ -269,8 +269,15 @@ Umrühren nötig.
 ### Allgemein
 | Attribut   | Default | Beschreibung |
 |------------|---------|--------------|
+| `targetTempSchedule` | – (leer) | Zeitabhängige Solltemperatur, Liste von `HH:MM Temp`-Paaren (z. B. `00:00 32 16:00 33.5`). Überschreibt `set targetTemp`. Leer = keine Zeitsteuerung |
 | `interval` | `60`    | Steuerintervall in Sekunden |
 | `disable`  | `0`     | 1 = Modul deaktivieren |
+
+> **Zeitabhängige Solltemperatur:** Es gilt jeweils der zuletzt erreichte
+> Eintrag (Umlauf über Mitternacht). Beispiel `00:00 32 16:00 33.5`: bis 16:00
+> Soll 32 °C, danach 33,5 °C. Sinnvoll, um tagsüber niedriger zu fahren (die
+> Sonne heizt über die Kuppel ohnehin nach) und abends, wenn die Sonne
+> nachlässt, höher – so schießt der Pool mittags nicht über.
 
 ---
 
@@ -362,6 +369,10 @@ attr poolControl solarIndexOff     3
 set poolControl targetTemp   30
 set poolControl filterHours  5
 set poolControl heatpumpTemp 28
+
+# Optional: zeitabhängige Solltemperatur (überschreibt targetTemp)
+# bis 16:00 -> 32 °C, danach -> 33,5 °C
+attr poolControl targetTempSchedule 00:00 32 16:00 33.5
 ```
 
 ---

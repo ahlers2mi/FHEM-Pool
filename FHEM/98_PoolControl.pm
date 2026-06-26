@@ -42,7 +42,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.9.3
+# Version:  v0.10.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -73,6 +73,7 @@ sub PoolControl_Initialize {
     $hash->{AttrList} =
           "disable:0,1 "
         . "interval:textField "
+        . "targetTempSchedule:textField "
         # --- Sensoren (Format: <Gerät>:<Reading>) ---
         . "poolSensor:textField "
         . "inflowSensor:textField "
@@ -134,7 +135,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.9.3";
+    $hash->{VERSION} = "0.10.0";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -363,6 +364,33 @@ sub PoolControl_hm2min {
     return $1 * 60 + $2;
 }
 
+# Aktive Solltemperatur aus einem Zeitplan "HH:MM temp HH:MM temp ...".
+# Gilt der zuletzt erreichte Eintrag; vor dem ersten Eintrag des Tages gilt der
+# späteste Eintrag (Umlauf über Mitternacht). Liefert undef bei leerem/ungültigem
+# Plan, sodass der Aufrufer auf den manuellen Wert zurückfällt.
+sub PoolControl_scheduledTarget {
+    my ($spec) = @_;
+    return undef if (!defined $spec || $spec eq "");
+    my @tok = split(/\s+/, $spec);
+    my @t   = localtime;
+    my $now = $t[2] * 60 + $t[1];
+
+    my ($best, $bestMin, $lastTemp, $lastMin);
+    while (@tok >= 2) {
+        my $hm   = shift @tok;
+        my $temp = shift @tok;
+        my $m = PoolControl_hm2min($hm);
+        next if (!defined $m || $temp !~ /^-?\d+(?:\.\d+)?$/);
+        if (!defined $lastMin || $m > $lastMin) { $lastMin = $m; $lastTemp = $temp; }
+        if ($m <= $now && (!defined $bestMin || $m > $bestMin)) {
+            $bestMin = $m; $best = $temp;
+        }
+    }
+    return $best + 0     if (defined $best);       # passender Eintrag heute
+    return $lastTemp + 0 if (defined $lastTemp);   # Umlauf: spätester Eintrag gilt
+    return undef;
+}
+
 # Liegt "jetzt" im Fenster [start,end)? Unterstützt über Mitternacht.
 sub PoolControl_inWindow {
     my ($start, $end) = @_;
@@ -410,7 +438,14 @@ sub PoolControl_Control {
     my $poolTemp   = PoolControl_num(AttrVal($name, "poolSensor",       ""), undef);
     my $inflowTemp = PoolControl_num(AttrVal($name, "inflowSensor",     ""), undef);
     my $index      = PoolControl_num(AttrVal($name, "solarIndexSensor", ""), 0);
+    # Solltemperatur: per "set targetTemp" gepflegt; optional zeitabhängig über
+    # targetTempSchedule überschrieben (z. B. tagsüber niedriger, abends höher).
     my $target     = ReadingsNum($name, "desiredTemperature", 30);
+    my $tsched     = AttrVal($name, "targetTempSchedule", "");
+    if ($tsched ne "") {
+        my $st = PoolControl_scheduledTarget($tsched);
+        $target = $st if (defined $st);
+    }
     my $filterTgt  = ReadingsNum($name, "filterHoursTarget",  0);
     my $hpTemp     = ReadingsNum($name, "heatpumpTemp",       0);
     my $hpOffset   = AttrVal($name, "heatpumpOffset", 0.9) + 0;
@@ -865,7 +900,7 @@ sub PoolControl_dumpConfig {
                   solarHysteresis solarHysteresisFilter
                   wpStartTime wpEndTime solarIndexMin solarIndexOn solarIndexOff
                   heatpumpOffset heatpumpRegBand heatpumpRampTime
-                  filterNightStart filterNightEnd interval)) {
+                  filterNightStart filterNightEnd interval targetTempSchedule)) {
         $out .= sprintf("  %-18s = %s\n", $a, AttrVal($name, $a, "(default)"));
     }
     $out .= sprintf("  %-18s = %s\n", "desiredTemperature", ReadingsVal($name, "desiredTemperature", "?"));
@@ -909,7 +944,7 @@ sub PoolControl_dumpConfig {
   <ul>
     <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an)</li>
     <li><a id="PoolControl-set-mode"></a><b>mode</b> auto|forceOn|forceOff &ndash; Betriebsmodus. <code>forceOn</code>: Filterpumpe und Wärmepumpe werden zwangsweise eingeschaltet (heizt sofort, ohne Zeitfenster/Solarindex); die Solarthermie läuft weiter automatisch (mit Auskühlschutz). <code>forceOff</code>: Filter, Solarpumpe und Wärmepumpe werden zwangsweise abgeschaltet. <code>auto</code>: zurück zur Automatik.</li>
-    <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte)</li>
+    <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte). Wird vom Attribut <code>targetTempSchedule</code> überschrieben, falls gesetzt.</li>
     <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag</li>
     <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Temperatur (wird optional über <code>heatpumpTempCmd</code> durchgereicht)</li>
     <li><a id="PoolControl-set-resetRuntime"></a><b>resetRuntime</b> &ndash; Tageslaufzeitzähler zurücksetzen</li>
@@ -1020,6 +1055,12 @@ sub PoolControl_dumpConfig {
         Typ: textField. Solarindex, bei dem die WP wieder gesperrt wird; dazwischen wird der Zustand gehalten (Ausschaltschwelle, Default = <code>solarIndexOn</code>).</li>
 
     <p><b>Allgemein</b></p>
+    <li><a id="PoolControl-attr-targetTempSchedule"></a><b>targetTempSchedule</b><br>
+        Typ: textField. Zeitabhängige Solltemperatur als Liste von <code>HH:MM Temp</code>-Paaren
+        (z. B. <code>00:00 32 16:00 33.5</code>). Es gilt jeweils der zuletzt erreichte Eintrag;
+        vor dem ersten Eintrag des Tages der späteste (Umlauf über Mitternacht). Überschreibt die
+        per <code>set targetTemp</code> gesetzte <code>desiredTemperature</code>. Leer = keine
+        Zeitsteuerung. Sinnvoll z. B. tagsüber niedriger (Sonne heizt nach), abends höher.</li>
     <li><a id="PoolControl-attr-interval"></a><b>interval</b><br>
         Typ: textField. Steuerintervall in Sekunden (Default 60).</li>
     <li><a id="PoolControl-attr-disable"></a><b>disable</b> 0|1<br>
