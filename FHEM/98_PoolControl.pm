@@ -44,7 +44,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.10.1
+# Version:  v0.10.2
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -137,7 +137,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.10.1";
+    $hash->{VERSION} = "0.10.2";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -861,7 +861,9 @@ sub PoolControl_Control {
         defined $hpEff ? sprintf("%.1f", $hpEff) : "?");
     readingsBulkUpdate($hash, "mode",                $mode);
     readingsBulkUpdate($hash, "quality",             $qualTxt) if ($qualTxt ne "");
-    readingsBulkUpdate($hash, "lastDecision",        join("; ", @reason)) if (@reason);
+    # Immer schreiben, damit Wert + Zeitstempel den aktuellen Zyklus zeigen und
+    # kein alter Hinweis stehenbleibt; "-" wenn gerade nichts anzumerken ist.
+    readingsBulkUpdate($hash, "lastDecision", @reason ? join("; ", @reason) : "-");
     readingsBulkUpdate($hash, "state",               $stateTxt);
     readingsEndUpdate($hash, 1);
 
@@ -1130,7 +1132,7 @@ sub PoolControl_dumpConfig {
 
     <p><b>Sonstige</b></p>
     <li><b>quality</b> &ndash; Wasserqualität als <code>pH &lt;x&gt; / ORP &lt;y&gt;</code> (nur wenn <code>qualitySensor</code> Werte liefert).</li>
-    <li><b>lastDecision</b> &ndash; Klartext-Begründung der letzten Entscheidung (z. B. warum WP/Solar nicht laufen).</li>
+    <li><b>lastDecision</b> &ndash; Klartext-Begründung des aktuellen Zyklus (z. B. warum WP/Solar nicht laufen); <code>-</code>, wenn nichts anzumerken ist. Wird jeden Zyklus aktualisiert (kein veralteter Hinweis).</li>
     <li><b>state</b> &ndash; Kurzüberblick: <code>[Modus] Pool x/Soll y°C | Filter on/off (Grund) | Laufzeit/Soll h</code>.</li>
   </ul>
 </ul>
