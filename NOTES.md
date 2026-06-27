@@ -58,10 +58,11 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
 
 ## Offene To-dos / geparkt
 
-1. **WP ins Smart Home** (statt Zeitschaltuhr). Danach: **WP-Heizbedarf-Gate** –
-   WP/Filter aus, sobald kein Heizbedarf (Pool ≥ Soll). Aktuell bewusst NICHT
-   gebaut, weil das Modul die WP noch nicht echt schaltet (würde nur den Filter
-   gegen die timer-gesteuerte WP abschalten).
+1. **WP ins Smart Home** (statt Zeitschaltuhr) – dann schaltet das Modul die WP
+   wirklich (heute `d_pool_wp` = Dummy, WP an Zeitschaltuhr).
+   - ✅ **WP-Heizbedarf-Gate** ist gebaut (v0.10.1, PR #9): WP wird nur
+     freigegeben bei Heizbedarf **und** Pool < `heatpumpTemp`; sonst bleibt mit
+     der WP auch der Filter aus. Sicher, weil die WP nur mit Durchfluss heizt.
 2. **Eigener (Funk-)Kollektorfühler** (Kollektor liegt weit weg, kein Strom →
    batterie-/funkbasiert). Einhängbar als `solarEnable` (numerisch +
    `solarEnableMin`) oder künftiges Attribut `collectorSensor`. Ermöglicht
@@ -90,4 +91,5 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
 - #1 Modul-Grundgerüst · #2 Solar-Zeitfenster/`solarEnable` · #3 Index-Hysterese
 - #4 Attribut-Hilfe + Handbetrieb (`mode`) + Umrühren-Soll-Gate + Filter/Solar-Entkopplung
 - #5 Readings in der commandref · #6 WP-Regelband (`heatpumpRegBand`)
-- #7 zeitabhängige Solltemperatur (`targetTempSchedule`)
+- #7 zeitabhängige Solltemperatur (`targetTempSchedule`) · #8 NOTES.md
+- #9 WP-Heizbedarf-Gate (WP/Filter aus, wenn Pool warm genug)

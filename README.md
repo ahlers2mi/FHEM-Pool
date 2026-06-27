@@ -34,7 +34,7 @@ Gesteuert werden:
 | **Heizung**     | Solltemperatur, geheizt über Solarthermie und Wärmepumpe – beide sonnengesteuert, arbeiten zusammen. |
 | **Filter & Solar** | Solar löst keine Filterung aus. Läuft **nur** Solar (ohne WP), bleibt der Filter **aus** → langsame Strömung, großer Temperaturhub. Bei WP-Betrieb läuft der Filter mit, Solar wird dann an einer kleineren Schwelle bewertet. |
 | **Auskühlschutz** | Solarpumpe wird abgeschaltet, wenn der nutzbare Solarhub die (flussabhängige) Schwelle unterschreitet; WP-Beitrag wird abgezogen, WP-Anlaufphase ausgespart. |
-| **Wärmepumpe**  | Inverter-WP, regelt selbst. Modul gibt sie nur frei (Zeitfenster + ausreichender Solarindex) und teilt die Zieltemperatur mit. Bei WP-Betrieb läuft der Filter mit. |
+| **Wärmepumpe**  | Inverter-WP, regelt selbst. Modul gibt sie nur frei (Zeitfenster + ausreichender Solarindex + Heizbedarf + Pool unter WP-Sollwert) und teilt die Zieltemperatur mit. Bei WP-Betrieb läuft der Filter mit; ist der Pool warm genug, bleibt beides aus. |
 | **Wasserqualität** | Optionaler Sensor (z. B. BLE-YC01), nur informativ, blockiert die Steuerung nicht. |
 
 ---
@@ -119,9 +119,16 @@ erwarteten WP-Einlauftemperatur über dem Pool (`heatpumpEffective − poolTemp`
 
 ### Wärmepumpe (Inverter)
 Die WP ist eine Inverter-Wärmepumpe und **regelt ihre Leistung selbst**. Das
-Modul gibt sie daher nur **frei** und überlässt die Temperaturregelung der WP:
+Modul gibt sie daher nur **frei** und überlässt die Temperaturregelung der WP.
+Freigabe nur, wenn **alle** Bedingungen erfüllt sind:
 - aktuelle Zeit liegt im Fenster `wpStartTime`–`wpEndTime` (Default 09:00–22:00),
-- der `solarIndex` reicht aus (genug Stromüberschuss).
+- der `solarIndex` reicht aus (genug Stromüberschuss),
+- es besteht **Heizbedarf** (`poolTemp < Soll`) **und** der Pool liegt **unter dem
+  WP-Sollwert** `heatpumpTemp` (darüber kann die WP ohnehin nicht mehr heizen).
+
+Ist der Pool warm genug, wird die WP **nicht** freigegeben – und damit läuft auch
+**die Filterpumpe nicht** „für die WP". Die noch fehlende Filterzeit holt das
+Modul im Nachtfenster nach.
 
 WP und Solar sind beide sonnengesteuert und arbeiten zusammen. Bei WP-Betrieb
 läuft die Filterpumpe mit (die WP arbeitet auf Filtergeschwindigkeit); die

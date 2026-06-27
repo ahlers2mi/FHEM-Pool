@@ -28,8 +28,10 @@
 #     eine externe Freigabe (solarEnable, z. B. PV-Überschuss oder Kollektor-
 #     temperatur) einschränken, damit die Pumpe nachts/ohne Sonne nicht taktet.
 #   * Wärmepumpe (Inverter, regelt selbst): Das Modul gibt die WP nur frei
-#     (Zeitfenster wpStartTime/wpEndTime und ausreichender Solarindex) und teilt
-#     ihr die Zieltemperatur mit. WP und Solar sind beide sonnengesteuert und
+#     (Zeitfenster wpStartTime/wpEndTime, ausreichender Solarindex, Heizbedarf
+#     und Pool unter WP-Sollwert) und teilt ihr die Zieltemperatur mit. Ist der
+#     Pool warm genug, wird die WP – und damit die Filterpumpe – nicht „für die
+#     WP" eingeschaltet. WP und Solar sind beide sonnengesteuert und
 #     arbeiten zusammen; bei WP-Betrieb läuft die Filterpumpe mit. Der Solarindex
 #     (verfügbarer Stromüberschuss) wirkt mit Hysterese: Freigabe ab
 #     solarIndexOn, Sperre bei solarIndexOff, dazwischen Zustand halten. Die
@@ -42,7 +44,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.10.0
+# Version:  v0.10.1
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -135,7 +137,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.10.0";
+    $hash->{VERSION} = "0.10.1";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -686,10 +688,19 @@ sub PoolControl_Control {
         # die WP läuft also unabhängig von der Solarpumpe. Bei WP-Betrieb läuft
         # die Filterpumpe mit; der Solarhub wird dann an der kleineren, fluss-
         # abhängigen Schwelle (solarHysteresisFilter) bewertet.
+        #
+        # WP nur freigeben, wenn sie real etwas beitragen kann: Heizbedarf
+        # besteht UND der Pool noch unter dem WP-Sollwert liegt (darüber regelt
+        # die WP ohnehin ab). Sonst liefe die Filterpumpe sinnlos "für die WP"
+        # weiter, obwohl der Pool sein Soll schon erreicht hat. Ohne Pool-Sensor
+        # nicht blockieren (dann wie bisher nur Fenster + Index).
+        my $wpHeatOk = (!defined $poolTemp)
+                     || ($heatNeeded && $poolTemp < $hpTemp);
+
         # forceOn -> WP zwangsweise heizen (Gates übergehen), forceOff -> aus.
         if    ($mode eq "forceOn")  { $wpWant = 1; }
         elsif ($mode eq "forceOff") { $wpWant = 0; }
-        else { $wpWant = ($inWindow && $indexOk) ? 1 : 0; }
+        else { $wpWant = ($inWindow && $indexOk && $wpHeatOk) ? 1 : 0; }
 
         if ($wpWant && !$wpOn) {
             PoolControl_switch($hpDev, $hpOnCmd);
@@ -708,6 +719,11 @@ sub PoolControl_Control {
             push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
             push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
                 if ($inWindow && !$indexOk);
+            if ($inWindow && $indexOk && !$wpHeatOk) {
+                push @reason, (defined $poolTemp && !$heatNeeded)
+                    ? "WP aus: Soll erreicht"
+                    : "WP aus: Pool >= WP-Sollwert ($hpTemp)";
+            }
         }
     }
     my $wpActive = PoolControl_isOn($hpDev, $hpRd, $hpOnRe);
@@ -929,7 +945,9 @@ sub PoolControl_dumpConfig {
   Temperaturhub erreicht. Solar-Laufzeit zählt nicht auf das Filtersoll. Der
   Auskühlschutz schaltet die Solarpumpe ab, wenn der nutzbare Solarhub die
   (flussabhängige) Schwelle unterschreitet. Die Wärmepumpe läuft nur im
-  Zeitfenster und bei ausreichendem Solarindex.
+  Zeitfenster, bei ausreichendem Solarindex und solange Heizbedarf besteht
+  (Pool unter Soll und unter WP-Sollwert); ist der Pool warm genug, bleibt mit
+  der WP auch die Filterpumpe aus.
   <br><br>
 
   <a id="PoolControl-define"></a>
