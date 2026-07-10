@@ -74,6 +74,19 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
    24.06. ~1 h Heizpause, weil der Index nach kurzem Einbruch erst wieder 8
    erreichen musste.
 
+### Ideen (bewusst zurückgestellt – Modul nicht verkomplizieren)
+
+- **Nachtkühlung über die Solarthermie:** Bei zu warmem Pool nachts die
+  Solarpumpe laufen lassen → der Kollektor strahlt Wärme an den kühlen
+  Nachthimmel ab (Umkehrung des Heizfalls). Der jetzige Auskühlschutz
+  *verhindert* das bewusst (schaltet ab, wenn Einlauf < Pool); bräuchte also
+  einen eigenen „Kühlmodus" mit umgekehrter Logik + oberer Solltemperatur-
+  Schwelle. (Idee vom 28.06., als der Pool passiv auf ~35 °C kam.)
+- **Filterquote auch tagsüber verteilen:** An heißen Tagen ohne Heizbedarf läuft
+  der Filter fast nur nachts (Nachfüllung der Tagesstunden im Block). Optional:
+  die Filterstunden über den Tag verteilen (z. B. wenn tagsüber jemand
+  schwimmt), statt sie nur über Heizbetrieb + Nachtfenster abzudecken.
+
 ## Log-Beobachtungen
 
 - **24.06.:** WP-Heizen ok; ~1 h WP-Pause durch Index-Hysterese (Index fiel auf
@@ -85,6 +98,12 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
 - **26.06.:** Pool warm (≥ Soll), `heatpumpState on` trotz `heatingNeeded no`
   (fehlendes WP-Gate). Harmlos, da WP bei ~31,5 °C kappt und die Filterzeit eh
   aufs Tagessoll zählt.
+- **27.06. ~11:54:** v0.10.2 live (`heatpumpTemp` real auf 31 gesetzt). WP-Gate
+  greift sichtbar: Pool 32,8 > Soll 32 → WP **und** Filter aus (`Filter off
+  (kein Bedarf)`), `lastDecision: WP aus: Soll erreicht`. Pool-Max ~35,2 °C.
+- **28.06.:** sehr warm, Pool durchgehend ≥ Soll → weder WP noch Solar heizen
+  (alles passiv über Sonne/Kuppel, Max ~33–35 °C). Filter lief tagsüber kaum
+  (Heizbetrieb fehlt) → Tagesquote landet im Nachtfenster. Steuerung korrekt.
 
 ## PR-Historie (Feature-Branch `claude/optimistic-ramanujan-ew7wjc`)
 
