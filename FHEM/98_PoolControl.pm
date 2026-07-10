@@ -44,7 +44,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.10.2
+# Version:  v0.10.3
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -137,7 +137,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.10.2";
+    $hash->{VERSION} = "0.10.3";
 
     # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
     # falls noch keine Readings existieren.
@@ -186,6 +186,7 @@ sub PoolControl_Set {
         . "filterHours:slider,0,0.5,24 "
         . "heatpumpTemp:slider,10,0.5,40 "
         . "resetRuntime:noArg "
+        . "solarCheck:noArg "
         . "check:noArg";
 
     if ($cmd eq "control") {
@@ -232,6 +233,20 @@ sub PoolControl_Set {
         $hash->{".runtimeSec"}  = 0;
         $hash->{".runtimeDate"} = PoolControl_dayKey($hash);
         readingsSingleUpdate($hash, "filterRuntimeToday", 0, 1);
+        return undef;
+    }
+    elsif ($cmd eq "solarCheck") {
+        # Erzwungene, sofortige Solar-Neuprüfung – egal, was die Automatik zuvor
+        # entschieden hat. "set check" respektiert weiterhin die Auskühl-Sperre
+        # (solarRetryDelay): wurde Solar wegen zu kleinem Hub abgeschaltet, läuft
+        # es erst nach Ablauf der Sperrzeit wieder an. "solarCheck" hebt genau
+        # diese Sperre auf, verwirft den Prüfphasen-Timer und startet dann sofort
+        # einen Steuerzyklus, sodass Solar garantiert einen frischen
+        # Anlaufversuch macht (nützlich, wenn die Sonne offensichtlich wieder auf
+        # den Platten steht).
+        delete $hash->{".solarOffColdTime"};   # Auskühl-Sperre aufheben
+        delete $hash->{".solarOnTime"};        # Prüfphasen-/Settle-Timer verwerfen
+        PoolControl_Control($hash);
         return undef;
     }
     elsif ($cmd eq "check") {
@@ -968,7 +983,8 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag</li>
     <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Temperatur (wird optional über <code>heatpumpTempCmd</code> durchgereicht)</li>
     <li><a id="PoolControl-set-resetRuntime"></a><b>resetRuntime</b> &ndash; Tageslaufzeitzähler zurücksetzen</li>
-    <li><a id="PoolControl-set-check"></a><b>check</b> &ndash; Steuerzyklus sofort ausführen</li>
+    <li><a id="PoolControl-set-solarCheck"></a><b>solarCheck</b> &ndash; erzwingt eine sofortige, frische Solar-Prüfung. Im Unterschied zu <code>check</code> wird dabei die Auskühl-Sperre (<code>solarRetryDelay</code>, gesetzt nach <code>off (zu kalt, Auskuehlschutz)</code>) sowie der Prüfphasen-Timer verworfen, sodass die Solarpumpe unabhängig von der vorherigen Automatik-Entscheidung erneut einen Anlaufversuch macht. Nützlich, wenn die Sonne wieder klar auf den Kollektor scheint, das Modul aber noch in der Wartezeit nach der letzten Auskühlung steht. (Zeitfenster <code>solarStartTime</code>/<code>solarEndTime</code>, externe Freigabe <code>solarEnable</code> und Heizbedarf gelten weiterhin.)</li>
+    <li><a id="PoolControl-set-check"></a><b>check</b> &ndash; Steuerzyklus sofort ausführen (respektiert die laufenden Sperren; für einen erzwungenen Solar-Neustart <code>solarCheck</code> verwenden)</li>
   </ul><br>
 
   <a id="PoolControl-get"></a>
@@ -1032,7 +1048,7 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-attr-solarSettleTime"></a><b>solarSettleTime</b><br>
         Typ: Slider (0–1800 s). Wartezeit nach Solar-Anlauf vor der Auskühlschutz-Prüfung; deckt die Umlaufzeit des Solarkreises ab (~2 min; Default 180).</li>
     <li><a id="PoolControl-attr-solarRetryDelay"></a><b>solarRetryDelay</b><br>
-        Typ: Slider (0–7200 s). Sperrzeit nach Abschaltung wegen Auskühlung (Default 1800).</li>
+        Typ: Slider (0–7200 s). Sperrzeit nach Abschaltung wegen Auskühlung (Default 1800). Ein <code>set solarCheck</code> hebt diese Sperre einmalig auf und erzwingt einen sofortigen Anlaufversuch.</li>
     <li><a id="PoolControl-attr-solarStartTime"></a><b>solarStartTime</b><br>
         Typ: textField (HH:MM). Beginn des Zeitfensters, in dem ein Solar-Anlaufversuch erlaubt ist (leer = ganztags).</li>
     <li><a id="PoolControl-attr-solarEndTime"></a><b>solarEndTime</b><br>
