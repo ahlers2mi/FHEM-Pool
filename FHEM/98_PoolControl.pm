@@ -44,7 +44,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.10.3
+# Version:  v0.11.0
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -89,6 +89,7 @@ sub PoolControl_Initialize {
         . "filterOffCmd:textField "
         . "filterNightStart:textField "
         . "filterNightEnd:textField "
+        . "filterHours:slider,0,0.5,24 "
         # --- Umrühren / Durchmischung ---
         . "mixInterval:slider,0,60,7200 "
         . "mixDuration:slider,0,30,1800 "
@@ -113,6 +114,7 @@ sub PoolControl_Initialize {
         . "heatpumpOnRegex:textField "
         . "heatpumpOnCmd:textField "
         . "heatpumpOffCmd:textField "
+        . "heatpumpTemp:slider,10,0.5,40 "
         . "heatpumpOffset:slider,0,0.1,5 "
         . "heatpumpRegBand:slider,0,0.1,5 "
         . "heatpumpRampTime:slider,0,30,1800 "
@@ -137,30 +139,56 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.10.3";
+    $hash->{VERSION} = "0.11.0";
 
-    # Defaultwerte für die per "set" gepflegten Sollwerte anlegen,
-    # falls noch keine Readings existieren.
+    # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
+    # sich nach einem Neustart bewusst auf sichere Defaults zurück:
+    # controlActive=on, mode=auto (ein haengengebliebenes forceOff will man nicht),
+    # desiredTemperature=30 (wird i. d. R. eh vom targetTempSchedule ueberschrieben).
+    # Die Sollwerte filterHours und heatpumpTemp sind dagegen ATTRIBUTE (s.
+    # AttrList) und ueberleben Neustarts zuverlaessig ueber die Config.
     readingsBeginUpdate($hash);
     readingsBulkUpdate($hash, "controlActive",
         ReadingsVal($name, "controlActive", "on"));
     readingsBulkUpdate($hash, "mode",
         ReadingsVal($name, "mode", "auto"));
+    readingsBulkUpdate($hash, "filterManual",
+        ReadingsVal($name, "filterManual", "auto"));
     readingsBulkUpdate($hash, "desiredTemperature",
         ReadingsVal($name, "desiredTemperature", 30));
-    readingsBulkUpdate($hash, "filterHoursTarget",
-        ReadingsVal($name, "filterHoursTarget", 5));
-    readingsBulkUpdate($hash, "heatpumpTemp",
-        ReadingsVal($name, "heatpumpTemp", 28));
     readingsEndUpdate($hash, 0);
 
     PoolControl_setNotifyDev($hash);
 
-    # Erste Steuerung kurz nach dem Start (Geräte müssen geladen sein).
     RemoveInternalTimer($hash);
+    # Einmalige Migration alter Readings -> Attribute; laeuft nach dem Laden des
+    # Statefiles (deshalb per Timer, nicht inline in Define).
+    InternalTimer(gettimeofday() + 3, "PoolControl_migrate", $hash, 0);
+    # Erste Steuerung kurz nach dem Start (Geräte müssen geladen sein).
     InternalTimer(gettimeofday() + 5, "PoolControl_Control", $hash, 0)
         if ($init_done);
 
+    return undef;
+}
+
+# ----------------------------------------------------------------------------
+# PoolControl_migrate
+#   Einmalige Übernahme früherer Readings in die jetzt genutzten Attribute
+#   (Upgrade-Pfad) und Entfernen der veralteten Readings. Idempotent.
+# ----------------------------------------------------------------------------
+sub PoolControl_migrate {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+    # [Attribut, altes Reading]
+    for my $p (["filterHours", "filterHoursTarget"], ["heatpumpTemp", "heatpumpTemp"]) {
+        my ($attrName, $oldReading) = @$p;
+        my $old = ReadingsVal($name, $oldReading, undef);
+        if (!defined AttrVal($name, $attrName, undef)
+            && defined $old && $old ne "") {
+            CommandAttr(undef, "$name $attrName $old");
+        }
+        readingsDelete($hash, $oldReading) if (defined $hash->{READINGS}{$oldReading});
+    }
     return undef;
 }
 
@@ -182,6 +210,7 @@ sub PoolControl_Set {
     my $list =
           "control:on,off "
         . "mode:auto,forceOn,forceOff "
+        . "filter:on,off,auto "
         . "targetTemp:slider,10,0.5,40 "
         . "filterHours:slider,0,0.5,24 "
         . "heatpumpTemp:slider,10,0.5,40 "
@@ -204,6 +233,17 @@ sub PoolControl_Set {
         PoolControl_Control($hash);
         return undef;
     }
+    elsif ($cmd eq "filter") {
+        # Manueller Filter-Override (an/aus), unabhängig von der Automatik.
+        # Wird nachts (Beginn Nachtfenster) automatisch auf "auto" zurückgesetzt,
+        # damit die Nachtfilterung normal läuft; "set filter auto" hebt ihn
+        # sofort auf. mode forceOn/forceOff hat weiterhin Vorrang.
+        my $v = $args[0] // "";
+        return "filter needs on|off|auto" if ($v !~ /^(on|off|auto)$/);
+        readingsSingleUpdate($hash, "filterManual", $v, 1);
+        PoolControl_Control($hash);
+        return undef;
+    }
     elsif ($cmd eq "targetTemp") {
         return "targetTemp needs a number" if (!defined $args[0] || $args[0] !~ /^[\d.]+$/);
         readingsSingleUpdate($hash, "desiredTemperature", $args[0] + 0, 1);
@@ -212,21 +252,14 @@ sub PoolControl_Set {
     }
     elsif ($cmd eq "filterHours") {
         return "filterHours needs a number" if (!defined $args[0] || $args[0] !~ /^[\d.]+$/);
-        readingsSingleUpdate($hash, "filterHoursTarget", $args[0] + 0, 1);
-        PoolControl_Control($hash);
+        # Als Attribut ablegen -> überlebt Neustarts (mit autosave) zuverlässig.
+        # Control-Neuberechnung + WP-Durchreichung erledigt PoolControl_Attr.
+        CommandAttr(undef, "$name filterHours " . ($args[0] + 0));
         return undef;
     }
     elsif ($cmd eq "heatpumpTemp") {
         return "heatpumpTemp needs a number" if (!defined $args[0] || $args[0] !~ /^[\d.]+$/);
-        readingsSingleUpdate($hash, "heatpumpTemp", $args[0] + 0, 1);
-
-        # Wert optional an das WP-Gerät durchreichen (z. B. set d_pool_wp temperatur <x>)
-        my $hp     = AttrVal($name, "heatpumpSwitch", "");
-        my $tmpcmd = AttrVal($name, "heatpumpTempCmd", "");
-        if ($hp ne "" && $tmpcmd ne "" && defined $defs{$hp}) {
-            fhem("set $hp $tmpcmd " . ($args[0] + 0));
-        }
-        PoolControl_Control($hash);
+        CommandAttr(undef, "$name heatpumpTemp " . ($args[0] + 0));
         return undef;
     }
     elsif ($cmd eq "resetRuntime") {
@@ -288,6 +321,23 @@ sub PoolControl_Attr {
             RemoveInternalTimer($hash);
             InternalTimer(gettimeofday() + 2, "PoolControl_Control", $hash, 0);
         }
+    }
+
+    # heatpumpTemp: Zieltemperatur optional an das WP-Gerät durchreichen
+    # (z. B. set d_pool_wp temperatur <x>). Nur im laufenden Betrieb, nicht
+    # beim Config-Laden.
+    if ($init_done && $cmd eq "set" && $attrName eq "heatpumpTemp"
+        && defined $attrVal && $attrVal =~ /^[\d.]+$/) {
+        my $hp     = AttrVal($name, "heatpumpSwitch", "");
+        my $tmpcmd = AttrVal($name, "heatpumpTempCmd", "");
+        if ($hp ne "" && $tmpcmd ne "" && defined $defs{$hp}) {
+            fhem("set $hp $tmpcmd " . ($attrVal + 0));
+        }
+    }
+
+    # Sollwert-Änderung (Attribut) -> Steuerung neu rechnen.
+    if ($init_done && $attrName =~ /^(heatpumpTemp|filterHours)$/) {
+        InternalTimer(gettimeofday() + 1, "PoolControl_Control", $hash, 0);
     }
 
     # Nach dem eigentlichen Setzen des Attributs NOTIFYDEV neu aufbauen.
@@ -463,8 +513,8 @@ sub PoolControl_Control {
         my $st = PoolControl_scheduledTarget($tsched);
         $target = $st if (defined $st);
     }
-    my $filterTgt  = ReadingsNum($name, "filterHoursTarget",  0);
-    my $hpTemp     = ReadingsNum($name, "heatpumpTemp",       0);
+    my $filterTgt  = AttrVal($name, "filterHours",  5) + 0;
+    my $hpTemp     = AttrVal($name, "heatpumpTemp", 28) + 0;
     my $hpOffset   = AttrVal($name, "heatpumpOffset", 0.9) + 0;
     my $hpRegBand  = AttrVal($name, "heatpumpRegBand", 0.5) + 0;
     # Erwartete Einlauftemperatur, die die WP liefert. Bei voller Leistung
@@ -759,6 +809,22 @@ sub PoolControl_Control {
     my $inNight    = PoolControl_inWindow($nightStart, $nightEnd);
     my $nightFill  = ($inNight && $remainSec > 0) ? 1 : 0;
 
+    # --- Manueller Filter-Override (set filter on|off) --------------------
+    # Beim Eintritt ins Nachtfenster einmalig auf "auto" zurücksetzen, damit die
+    # Nachtfilterung normal läuft und ein tagsüber gesetztes on/off nicht ewig
+    # hängen bleibt. Eine manuelle Vorgabe *im* Nachtfenster bleibt bestehen.
+    if ($inNight) {
+        if (!($hash->{".manualNightCleared"} // 0)) {
+            readingsSingleUpdate($hash, "filterManual", "auto", 1)
+                if (ReadingsVal($name, "filterManual", "auto") ne "auto");
+            $hash->{".manualNightCleared"} = 1;
+        }
+    }
+    else {
+        $hash->{".manualNightCleared"} = 0;
+    }
+    my $manual = ReadingsVal($name, "filterManual", "auto");
+
     # --- Umrühren / Durchmischung ----------------------------------------
     # Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool.
     # Damit sich die Wärme verteilt (und der Sensor nicht vorzeitig
@@ -796,13 +862,15 @@ sub PoolControl_Control {
         }
     }
 
-    # forceOn -> Filter zwangsweise an, forceOff -> aus, sonst Automatik.
-    # Solar löst KEINE Filterung aus (eigener langsamer Kreis); der Filter folgt
-    # dem WP-Wunsch (wpWant, damit beide im selben Zyklus starten), der
-    # Nachtfilterung und dem Umrühren.
+    # Vorrang: forceOn/forceOff (mode) > manueller Override (set filter on|off) >
+    # Automatik. Solar löst KEINE Filterung aus (eigener langsamer Kreis); der
+    # Filter folgt dem WP-Wunsch (wpWant, damit beide im selben Zyklus starten),
+    # der Nachtfilterung und dem Umrühren.
     my $wantFilter;
-    if    ($mode eq "forceOn")  { $wantFilter = 1; }
-    elsif ($mode eq "forceOff") { $wantFilter = 0; }
+    if    ($mode eq "forceOn")   { $wantFilter = 1; }
+    elsif ($mode eq "forceOff")  { $wantFilter = 0; }
+    elsif ($manual eq "on")      { $wantFilter = 1; }
+    elsif ($manual eq "off")     { $wantFilter = 0; }
     else { $wantFilter = ($wpWant || $nightFill || $mixActive) ? 1 : 0; }
 
     if ($filterDev ne "") {
@@ -811,10 +879,11 @@ sub PoolControl_Control {
             $hash->{".filterByModule"} = 1;
         }
         elsif (!$wantFilter && $filterOn
-               && (($hash->{".filterByModule"} // 0) || $mode eq "forceOff")) {
+               && (($hash->{".filterByModule"} // 0)
+                   || $mode eq "forceOff" || $manual eq "off")) {
             # Sonst nur abschalten, wenn das Modul den Filter selbst eingeschaltet
-            # hat (manuelle Schaltungen nicht überstimmen). Bei forceOff jedoch
-            # immer abschalten.
+            # hat (manuelle Fremdschaltungen nicht überstimmen). Bei forceOff und
+            # bei manuellem "off" jedoch immer abschalten.
             PoolControl_switch($filterDev, $filterOffCmd);
             $hash->{".filterByModule"} = 0;
         }
@@ -825,6 +894,8 @@ sub PoolControl_Control {
     my $filterReason =
           $mode eq "forceOn"  ? "force on"
         : $mode eq "forceOff" ? "force off"
+        : $manual eq "on"     ? "manuell an"
+        : $manual eq "off"    ? "manuell aus"
         : ($wpActive && $solarHeating) ? "WP+Solar"
         : $wpActive     ? "WP"
         : $solarHeating ? "Solar"
@@ -932,13 +1003,12 @@ sub PoolControl_dumpConfig {
                   solarStartTime solarEndTime solarEnable solarEnableMin
                   solarHysteresis solarHysteresisFilter
                   wpStartTime wpEndTime solarIndexMin solarIndexOn solarIndexOff
-                  heatpumpOffset heatpumpRegBand heatpumpRampTime
-                  filterNightStart filterNightEnd interval targetTempSchedule)) {
+                  heatpumpOffset heatpumpRegBand heatpumpRampTime heatpumpTemp
+                  filterNightStart filterNightEnd filterHours interval
+                  targetTempSchedule)) {
         $out .= sprintf("  %-18s = %s\n", $a, AttrVal($name, $a, "(default)"));
     }
     $out .= sprintf("  %-18s = %s\n", "desiredTemperature", ReadingsVal($name, "desiredTemperature", "?"));
-    $out .= sprintf("  %-18s = %s\n", "filterHoursTarget",  ReadingsVal($name, "filterHoursTarget",  "?"));
-    $out .= sprintf("  %-18s = %s\n", "heatpumpTemp",       ReadingsVal($name, "heatpumpTemp",       "?"));
     return $out;
 }
 
@@ -979,9 +1049,10 @@ sub PoolControl_dumpConfig {
   <ul>
     <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an)</li>
     <li><a id="PoolControl-set-mode"></a><b>mode</b> auto|forceOn|forceOff &ndash; Betriebsmodus. <code>forceOn</code>: Filterpumpe und Wärmepumpe werden zwangsweise eingeschaltet (heizt sofort, ohne Zeitfenster/Solarindex); die Solarthermie läuft weiter automatisch (mit Auskühlschutz). <code>forceOff</code>: Filter, Solarpumpe und Wärmepumpe werden zwangsweise abgeschaltet. <code>auto</code>: zurück zur Automatik.</li>
+    <li><a id="PoolControl-set-filter"></a><b>filter</b> on|off|auto &ndash; manueller Filter-Override: <code>on</code> Filter zwangsweise an, <code>off</code> zwangsweise aus, <code>auto</code> zurück zur Automatik. Wird beim Beginn des Nachtfensters automatisch auf <code>auto</code> zurückgesetzt (damit die Nachtfilterung läuft). <code>mode forceOn/forceOff</code> hat Vorrang.</li>
     <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte). Wird vom Attribut <code>targetTempSchedule</code> überschrieben, falls gesetzt.</li>
-    <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag</li>
-    <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Temperatur (wird optional über <code>heatpumpTempCmd</code> durchgereicht)</li>
+    <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag. Schreibt das gleichnamige <b>Attribut</b> <code>filterHours</code> (überlebt Neustarts).</li>
+    <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Zieltemperatur. Schreibt das gleichnamige <b>Attribut</b> <code>heatpumpTemp</code> (überlebt Neustarts) und reicht den Wert optional über <code>heatpumpTempCmd</code> an das WP-Gerät durch.</li>
     <li><a id="PoolControl-set-resetRuntime"></a><b>resetRuntime</b> &ndash; Tageslaufzeitzähler zurücksetzen</li>
     <li><a id="PoolControl-set-solarCheck"></a><b>solarCheck</b> &ndash; erzwingt eine sofortige, frische Solar-Prüfung. Im Unterschied zu <code>check</code> wird dabei die Auskühl-Sperre (<code>solarRetryDelay</code>, gesetzt nach <code>off (zu kalt, Auskuehlschutz)</code>) sowie der Prüfphasen-Timer verworfen, sodass die Solarpumpe unabhängig von der vorherigen Automatik-Entscheidung erneut einen Anlaufversuch macht. Nützlich, wenn die Sonne wieder klar auf den Kollektor scheint, das Modul aber noch in der Wartezeit nach der letzten Auskühlung steht. (Zeitfenster <code>solarStartTime</code>/<code>solarEndTime</code>, externe Freigabe <code>solarEnable</code> und Heizbedarf gelten weiterhin.)</li>
     <li><a id="PoolControl-set-check"></a><b>check</b> &ndash; Steuerzyklus sofort ausführen (respektiert die laufenden Sperren; für einen erzwungenen Solar-Neustart <code>solarCheck</code> verwenden)</li>
@@ -1021,6 +1092,8 @@ sub PoolControl_dumpConfig {
         Typ: textField (HH:MM). Beginn des Nachtfilterfensters (Default 22:00).</li>
     <li><a id="PoolControl-attr-filterNightEnd"></a><b>filterNightEnd</b><br>
         Typ: textField (HH:MM). Ende des Nachtfilterfensters; hier wechselt auch der Filtertag (Default 06:00).</li>
+    <li><a id="PoolControl-attr-filterHours"></a><b>filterHours</b><br>
+        Typ: Slider (0–24 h). Gewünschte Filterstunden pro Tag (Default 5). Wird auch per <code>set filterHours</code> gesetzt; als Attribut gespeichert, damit es Neustarts übersteht.</li>
 
     <p><b>Umrühren / Durchmischung</b></p>
     <li>Umgerührt wird nur, wenn das Soll erreicht ist (kein Heizbedarf), um die
@@ -1071,6 +1144,8 @@ sub PoolControl_dumpConfig {
         Typ: textField. set-Kommando zum Einschalten (Default <code>on</code>).</li>
     <li><a id="PoolControl-attr-heatpumpOffCmd"></a><b>heatpumpOffCmd</b><br>
         Typ: textField. set-Kommando zum Ausschalten (Default <code>off</code>).</li>
+    <li><a id="PoolControl-attr-heatpumpTemp"></a><b>heatpumpTemp</b><br>
+        Typ: Slider (10–40 °C). Der Wärmepumpe mitgeteilte Zieltemperatur (Default 28). Wird auch per <code>set heatpumpTemp</code> gesetzt (reicht den Wert dann über <code>heatpumpTempCmd</code> an das WP-Gerät durch); als Attribut gespeichert, damit es Neustarts übersteht.</li>
     <li><a id="PoolControl-attr-heatpumpOffset"></a><b>heatpumpOffset</b><br>
         Typ: Slider (0–5 °C). Temperaturhub der WP über der aktuellen Pooltemperatur bei voller Leistung (bei Filtergeschwindigkeit ~0,8 °C, daher etwas höher als Toleranz wählen); wird im Auskühlschutz vom Einlaufwasser abgezogen und bestimmt die erwartete Einlauftemperatur <code>heatpumpEffective</code>. Zu niedrig gewählt würde Solar fälschlich als heizend gelten und Wärme über den kalten Kollektor verloren gehen (Default 0.9).</li>
     <li><a id="PoolControl-attr-heatpumpRegBand"></a><b>heatpumpRegBand</b><br>
@@ -1109,9 +1184,9 @@ sub PoolControl_dumpConfig {
     <p><b>Sollwerte / Betrieb</b> (per <code>set</code> gepflegt)</p>
     <li><b>controlActive</b> &ndash; on|off: ob die Steuerung aktiv ist (<code>set control</code>).</li>
     <li><b>mode</b> &ndash; auto|forceOn|forceOff: aktueller Betriebsmodus (<code>set mode</code>).</li>
+    <li><b>filterManual</b> &ndash; on|off|auto: manueller Filter-Override (<code>set filter</code>); wird nachts automatisch auf <code>auto</code> zurückgesetzt.</li>
     <li><b>desiredTemperature</b> &ndash; eingestellte Solltemperatur in °C (<code>set targetTemp</code>).</li>
-    <li><b>filterHoursTarget</b> &ndash; gewünschte Filterstunden pro Tag (<code>set filterHours</code>).</li>
-    <li><b>heatpumpTemp</b> &ndash; der WP mitgeteilte Zieltemperatur in °C (<code>set heatpumpTemp</code>).</li>
+    <li>Hinweis: <code>filterHours</code> und <code>heatpumpTemp</code> sind jetzt <b>Attribute</b> (nicht mehr Readings), damit sie Neustarts überstehen.</li>
 
     <p><b>Messwerte</b></p>
     <li><b>poolTemp</b> &ndash; aktuelle Pool-Wassertemperatur in °C (aus <code>poolSensor</code>; <code>?</code> wenn kein Sensor).</li>
