@@ -186,11 +186,14 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 |-------------------------|--------------|
 | `control on\|off`       | Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an) |
 | `mode auto\|forceOn\|forceOff` | Betriebsmodus: `forceOn` = Filter + WP zwangsweise heizen (ohne Zeitfenster/Solarindex; Solar bleibt automatisch mit Auskühlschutz), `forceOff` = Filter/Solar/WP zwangsweise aus, `auto` = zurück zur Automatik |
+| `filter on\|off\|auto`  | manueller Filter-Override; wird beim Beginn des Nachtfensters automatisch auf `auto` zurückgesetzt. `mode forceOn/forceOff` hat Vorrang |
 | `targetTemp <°C>`       | Solltemperatur des Pools (wird von `targetTempSchedule` überschrieben, falls gesetzt) |
-| `filterHours <h>`       | gewünschte Filterstunden pro Tag |
-| `heatpumpTemp <°C>`     | der Wärmepumpe mitgeteilte Temperatur |
+| `filterHours <h>`       | gewünschte Filterstunden pro Tag → schreibt das **Attribut** `filterHours` (überlebt Neustarts) |
+| `heatpumpTemp <°C>`     | der Wärmepumpe mitgeteilte Temperatur → schreibt das **Attribut** `heatpumpTemp` (überlebt Neustarts) |
 | `resetRuntime`          | Tageslaufzeitzähler zurücksetzen |
 | `check`                 | Steuerzyklus sofort ausführen |
+
+> **Persistenz:** `filterHours` und `heatpumpTemp` sind **Attribute** (in der `fhem.cfg`), damit sie Neustarts sicher überstehen. `control`, `mode`, `filter` und `targetTemp` bleiben Readings und setzen sich bewusst auf sichere Defaults zurück (`filter`/`mode`/`control` nach Neustart bzw. `filter` nachts).
 
 ---
 
@@ -222,6 +225,7 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 | `filterOffCmd`       | `off`       | Ausschaltkommando |
 | `filterNightStart`   | `22:00`     | Beginn Nachtfilterung |
 | `filterNightEnd`     | `06:00`     | Ende Nachtfilterung; zugleich Wechsel des Filtertags (Tageszähler-Reset) |
+| `filterHours`        | `5`         | gewünschte Filterstunden pro Tag (auch per `set filterHours`) |
 
 ### Umrühren / Durchmischung
 Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool. Damit sich
@@ -263,6 +267,7 @@ Umrühren nötig.
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
+| `heatpumpTemp`         | `28`        | der WP mitgeteilte Zieltemperatur (auch per `set heatpumpTemp`; wird über `heatpumpTempCmd` durchgereicht) |
 | `heatpumpOffset`       | `0.9`       | voller Temperaturhub der WP über der Pooltemperatur (~0,8 °C real, etwas höher wählen); im Auskühlschutz abgezogen, bestimmt `heatpumpEffective` |
 | `heatpumpRegBand`      | `0.5`       | Regelband der Inverter-WP über `heatpumpTemp`; deckelt `heatpumpEffective` in Sollnähe (`min(poolTemp + offset, heatpumpTemp + regBand)`) |
 | `heatpumpRampTime`     | `180`       | Anlaufzeit der WP bis volle Leistung (s); währenddessen Auskühlschutz ausgesetzt |
@@ -295,9 +300,8 @@ Umrühren nötig.
 | `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit; Präfix `[forceOn]`/`[forceOff]` im Handbetrieb) |
 | `controlActive`      | on/off – ist die Steuerung aktiv (`set control`)? |
 | `mode`               | Betriebsmodus (`auto`/`forceOn`/`forceOff`) |
+| `filterManual`       | on/off/auto – manueller Filter-Override (`set filter`), nachts auf `auto` zurückgesetzt |
 | `desiredTemperature` | eingestellte Solltemperatur (`set targetTemp`) |
-| `filterHoursTarget`  | gewünschte Filterstunden pro Tag (`set filterHours`) |
-| `heatpumpTemp`       | der WP mitgeteilte Zieltemperatur (`set heatpumpTemp`) |
 | `poolTemp`           | aktuelle Pooltemperatur |
 | `inflowTemp`         | Temperatur des einlaufenden Wassers |
 | `targetTemp`         | aktuelle Solltemperatur |

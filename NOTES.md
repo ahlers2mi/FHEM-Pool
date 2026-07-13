@@ -55,6 +55,17 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   „Soll + Offset". Während WP-Anlauf wird der Auskühlschutz ausgesetzt.
 - **`targetTempSchedule`** überschreibt `desiredTemperature` zeitabhängig
   (greift sofort für Solar; für WP voll wirksam, sobald sie smart schaltbar ist).
+- **Persistenz der Sollwerte:** `filterHours` und `heatpumpTemp` sind **Attribute**
+  (in der `fhem.cfg`, mit `autosave` sofort persistent) → überleben Neustarts
+  zuverlässig. `set`-Readings brauchten dagegen ein `save` und gingen bei
+  Neustart ohne save auf die Modul-Defaults zurück (28/5) – genau das Problem.
+  `control`/`mode`/`filter`/`targetTemp` bleiben Readings (Reset auf sichere
+  Defaults ist hier gewollt).
+- **Manueller Filter-Override** `set filter on|off|auto`: Vorrang nach
+  mode-force; wird beim Beginn des Nachtfensters einmalig auf `auto` zurück-
+  gesetzt, damit die Nachtfilterung läuft.
+- **Tag-Filterung verteilt:** bewusst NICHT gebaut – Nachtfilterung ist gewollt
+  (fängt Tagesschmutz, leise, minimaler Wärmeverlust).
 
 ## Offene To-dos / geparkt
 
@@ -112,3 +123,7 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
 - #5 Readings in der commandref · #6 WP-Regelband (`heatpumpRegBand`)
 - #7 zeitabhängige Solltemperatur (`targetTempSchedule`)
 - #8 NOTES.md + WP-Heizbedarf-Gate (WP/Filter aus, wenn Pool warm genug)
+- #9 NOTES: Ideen (Nachtkühlung, Tag-Filterung) + Log 27./28.06.
+- dazwischen: `set solarCheck` (erzwungene Solar-Neuprüfung), v0.10.3
+- v0.11.0: `filterHours`/`heatpumpTemp` als **Attribute** (persistent) +
+  manueller Filter-Override `set filter on|off|auto` (nachts Reset)
