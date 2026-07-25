@@ -127,3 +127,11 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
 - dazwischen: `set solarCheck` (erzwungene Solar-Neuprüfung), v0.10.3
 - v0.11.0: `filterHours`/`heatpumpTemp` als **Attribute** (persistent) +
   manueller Filter-Override `set filter on|off|auto` (nachts Reset)
+- v0.11.1: `set solarCheck` übergeht jetzt zusätzlich das **Solarfenster**
+  (Zeitfenster `solarStartTime`/`solarEndTime` + Freigabe `solarEnable`) –
+  der erzwungene Check läuft also auch **ausserhalb des Solarfensters**.
+  Umgesetzt über ein klebriges Flag `.solarForceCheck`, das die folgenden
+  Automatik-Zyklen überdauert (sonst würde der nächste Tick vor Ablauf der
+  `solarSettleTime` wieder auf `off (ausserhalb Solarfenster)` schalten) und
+  erst bei echter Abschaltung (Auskühlschutz / Soll erreicht / forceOff)
+  gelöscht wird. Heizbedarf gilt weiterhin.
