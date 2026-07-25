@@ -135,3 +135,12 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   `solarSettleTime` wieder auf `off (ausserhalb Solarfenster)` schalten) und
   erst bei echter Abschaltung (Auskühlschutz / Soll erreicht / forceOff)
   gelöscht wird. Heizbedarf gilt weiterhin.
+- v0.11.2: **Kaltstart-Verlängerung der Prüfphase.** Lief die Solarpumpe seit
+  mindestens `solarColdStartAfter` (Default 14400 s = 4 h) nicht mehr, ist der
+  Solarkreis ausgekühlt; der erste Anlaufversuch danach läuft um
+  `solarColdStartExtra` (Default 180 s = 3 min) länger, bevor der Auskühlschutz
+  bewertet – warmes Wasser aus dem ausgekühlten Kreis braucht länger bis zum
+  `inflowSensor` (Schwarzrohr-Artefakt, s. Physik-Abschnitt). Umgesetzt über
+  `.solarLastRunTime` (Zeitstempel des letzten Solarbetriebs) und
+  `.solarSettleBonus` (bei jedem echten Anlaufversuch neu bestimmt: `coldExtra`
+  bei Idle ≥ `coldAfter`, sonst 0). `solarColdStartExtra 0` deaktiviert.

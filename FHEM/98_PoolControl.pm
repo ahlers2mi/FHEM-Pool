@@ -44,7 +44,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.11.1
+# Version:  v0.11.2
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -103,6 +103,8 @@ sub PoolControl_Initialize {
         . "solarHysteresisFilter:slider,0,0.1,5 "
         . "solarSettleTime:slider,0,30,1800 "
         . "solarRetryDelay:slider,0,60,7200 "
+        . "solarColdStartAfter:slider,0,600,86400 "
+        . "solarColdStartExtra:slider,0,30,1800 "
         . "solarStartTime:textField "
         . "solarEndTime:textField "
         . "solarEnable:textField "
@@ -139,7 +141,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.11.1";
+    $hash->{VERSION} = "0.11.2";
 
     # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
     # sich nach einem Neustart bewusst auf sichere Defaults zurück:
@@ -624,7 +626,13 @@ sub PoolControl_Control {
     if ($solarDev ne "") {
         my $settle     = AttrVal($name, "solarSettleTime", 180) + 0;
         my $retryDelay = AttrVal($name, "solarRetryDelay", 1800) + 0;
+        my $coldAfter  = AttrVal($name, "solarColdStartAfter", 14400) + 0;
+        my $coldExtra  = AttrVal($name, "solarColdStartExtra", 180) + 0;
         my $now        = gettimeofday();
+
+        # Zeitpunkt merken, an dem Solar zuletzt lief – Basis für die
+        # Kaltstart-Erkennung weiter unten (Anlaufversuch).
+        $hash->{".solarLastRunTime"} = $now if ($solarOn);
 
         # --- Solarfenster: Zeit + optionale Freigabe-Bedingung ------------
         # Ohne Kollektorfühler weiß das Modul nicht von selbst, ob Wärme vom
@@ -694,9 +702,12 @@ sub PoolControl_Control {
                 # nicht bewerten, Solar halten.
                 $solarState = "on (WP-Anlauf)";
             }
-            elsif (($now - $onSince) >= $settle) {
+            elsif (($now - $onSince) >= $settle + ($hash->{".solarSettleBonus"} // 0)) {
                 # Auskühlschutz: der nutzbare Solarhub muss die (flussabhängige)
-                # Schwelle erreichen.
+                # Schwelle erreichen. Nach einem Kaltstart (Solar lange aus,
+                # ausgekühlter Solarkreis) läuft die Prüfphase um solarColdStartExtra
+                # länger (.solarSettleBonus), damit warmes Wasser den inflowSensor
+                # überhaupt erreicht, bevor bewertet wird.
                 if (defined $solarGain && $solarGain < $reqGain) {
                     PoolControl_switch($solarDev, $solarOffCmd);
                     $hash->{".solarOffColdTime"} = $now;
@@ -718,6 +729,15 @@ sub PoolControl_Control {
             if (($now - $offCold) >= $retryDelay) {
                 PoolControl_switch($solarDev, $solarOnCmd);
                 $hash->{".solarOnTime"} = $now;
+                # Kaltstart-Erkennung: lief Solar seit mindestens
+                # solarColdStartAfter (Default 4 h) nicht mehr, ist der
+                # Solarkreis ausgekühlt -> für diesen ersten Lauf die
+                # Prüfphase um solarColdStartExtra (Default 3 min) verlängern.
+                # Sonst kein Bonus (0). Wird bei jedem echten Anlaufversuch neu
+                # bestimmt, bleibt also nie veraltet stehen.
+                my $idle = $now - ($hash->{".solarLastRunTime"} // 0);
+                $hash->{".solarSettleBonus"} =
+                    ($coldExtra > 0 && $idle >= $coldAfter) ? $coldExtra : 0;
                 $solarState = "on (Anlaufversuch)";
             }
             else {
@@ -1140,6 +1160,10 @@ sub PoolControl_dumpConfig {
         Typ: Slider (0–1800 s). Wartezeit nach Solar-Anlauf vor der Auskühlschutz-Prüfung; deckt die Umlaufzeit des Solarkreises ab (~2 min; Default 180).</li>
     <li><a id="PoolControl-attr-solarRetryDelay"></a><b>solarRetryDelay</b><br>
         Typ: Slider (0–7200 s). Sperrzeit nach Abschaltung wegen Auskühlung (Default 1800). Ein <code>set solarCheck</code> hebt diese Sperre einmalig auf und erzwingt einen sofortigen Anlaufversuch.</li>
+    <li><a id="PoolControl-attr-solarColdStartAfter"></a><b>solarColdStartAfter</b><br>
+        Typ: Slider (0–86400 s). Kaltstart-Schwelle: lief die Solarpumpe seit mindestens dieser Zeit nicht mehr, ist der Solarkreis ausgekühlt und der nächste Anlaufversuch gilt als Kaltstart (Default 14400 = 4 h). Dann wird die Prüfphase einmalig um <code>solarColdStartExtra</code> verlängert.</li>
+    <li><a id="PoolControl-attr-solarColdStartExtra"></a><b>solarColdStartExtra</b><br>
+        Typ: Slider (0–1800 s). Zusätzliche Wartezeit vor der Auskühlschutz-Prüfung beim ersten Anlauf nach einem Kaltstart (Default 180 = 3 min), damit warmes Wasser aus dem ausgekühlten Solarkreis den <code>inflowSensor</code> erreicht, bevor bewertet wird. Kommt zur <code>solarSettleTime</code> hinzu; nur für diesen ersten Lauf. 0 = deaktiviert.</li>
     <li><a id="PoolControl-attr-solarStartTime"></a><b>solarStartTime</b><br>
         Typ: textField (HH:MM). Beginn des Zeitfensters, in dem ein Solar-Anlaufversuch erlaubt ist (leer = ganztags).</li>
     <li><a id="PoolControl-attr-solarEndTime"></a><b>solarEndTime</b><br>
