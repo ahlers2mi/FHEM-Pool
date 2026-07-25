@@ -44,7 +44,7 @@
 # Attribute frei zuordenbar.
 #
 # Autor:    ahlers2mi
-# Version:  v0.11.0
+# Version:  v0.11.1
 # Lizenz:   GPL v2 oder höher (wie FHEM)
 ##############################################################################
 
@@ -139,7 +139,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.11.0";
+    $hash->{VERSION} = "0.11.1";
 
     # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
     # sich nach einem Neustart bewusst auf sichere Defaults zurück:
@@ -277,8 +277,19 @@ sub PoolControl_Set {
         # einen Steuerzyklus, sodass Solar garantiert einen frischen
         # Anlaufversuch macht (nützlich, wenn die Sonne offensichtlich wieder auf
         # den Platten steht).
+        #
+        # Zusätzlich wird das Solarfenster (Zeitfenster solarStartTime/
+        # solarEndTime + externe Freigabe solarEnable) für diesen erzwungenen
+        # Lauf übergangen: der Check läuft also auch AUSSERHALB des Solarfensters.
+        # Das Flag ist "klebrig" – es überdauert die nachfolgenden Automatik-
+        # Zyklen, damit der Auskühlschutz die volle Settle-Zeit (solarSettleTime)
+        # Zeit zum Messen hat und nicht schon beim nächsten Tick wieder als
+        # "off (ausserhalb Solarfenster)" abgeschaltet wird. Es wird erst
+        # aufgehoben, wenn Solar aus einem echten Grund abschaltet
+        # (Auskühlschutz, Soll erreicht, forceOff) – siehe PoolControl_Control.
         delete $hash->{".solarOffColdTime"};   # Auskühl-Sperre aufheben
         delete $hash->{".solarOnTime"};        # Prüfphasen-/Settle-Timer verwerfen
+        $hash->{".solarForceCheck"} = 1;       # Solarfenster für diesen Lauf übergehen
         PoolControl_Control($hash);
         return undef;
     }
@@ -645,13 +656,18 @@ sub PoolControl_Control {
                                 && ReadingsVal($eDev, $eRd, "") =~ /$eRe/) ? 1 : 0;
             }
         }
-        my $solarAllowed = ($inSolarWindow && $solEnergyOk) ? 1 : 0;
+        # "set solarCheck" setzt ein klebriges Force-Flag, das das Solarfenster
+        # (Zeit + Freigabe) übergeht, bis Solar aus einem echten Grund abschaltet.
+        my $forceCheck   = $hash->{".solarForceCheck"} // 0;
+        my $solarAllowed = ($forceCheck || ($inSolarWindow && $solEnergyOk))
+                         ? 1 : 0;
 
         if ($mode eq "forceOff") {
             # Zwangsabschaltung -> Solarpumpe aus.
             if ($solarOn) {
                 PoolControl_switch($solarDev, $solarOffCmd);
             }
+            delete $hash->{".solarForceCheck"};   # erzwungenen Lauf beenden
             $solarState = "off (force off)";
         }
         elsif (!$heatNeeded) {
@@ -660,6 +676,7 @@ sub PoolControl_Control {
                 PoolControl_switch($solarDev, $solarOffCmd);
                 $solarState = "off (Soll erreicht)";
             }
+            delete $hash->{".solarForceCheck"};   # erzwungenen Lauf beenden
         }
         elsif (!$solarAllowed) {
             # Außerhalb Solarfenster bzw. keine Solarenergie -> nicht anlaufen.
@@ -683,6 +700,7 @@ sub PoolControl_Control {
                 if (defined $solarGain && $solarGain < $reqGain) {
                     PoolControl_switch($solarDev, $solarOffCmd);
                     $hash->{".solarOffColdTime"} = $now;
+                    delete $hash->{".solarForceCheck"}; # erzwungenen Lauf beenden
                     $solarState = "off (zu kalt, Auskuehlschutz)";
                 }
                 else {
@@ -1054,7 +1072,7 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag. Schreibt das gleichnamige <b>Attribut</b> <code>filterHours</code> (überlebt Neustarts).</li>
     <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Zieltemperatur. Schreibt das gleichnamige <b>Attribut</b> <code>heatpumpTemp</code> (überlebt Neustarts) und reicht den Wert optional über <code>heatpumpTempCmd</code> an das WP-Gerät durch.</li>
     <li><a id="PoolControl-set-resetRuntime"></a><b>resetRuntime</b> &ndash; Tageslaufzeitzähler zurücksetzen</li>
-    <li><a id="PoolControl-set-solarCheck"></a><b>solarCheck</b> &ndash; erzwingt eine sofortige, frische Solar-Prüfung. Im Unterschied zu <code>check</code> wird dabei die Auskühl-Sperre (<code>solarRetryDelay</code>, gesetzt nach <code>off (zu kalt, Auskuehlschutz)</code>) sowie der Prüfphasen-Timer verworfen, sodass die Solarpumpe unabhängig von der vorherigen Automatik-Entscheidung erneut einen Anlaufversuch macht. Nützlich, wenn die Sonne wieder klar auf den Kollektor scheint, das Modul aber noch in der Wartezeit nach der letzten Auskühlung steht. (Zeitfenster <code>solarStartTime</code>/<code>solarEndTime</code>, externe Freigabe <code>solarEnable</code> und Heizbedarf gelten weiterhin.)</li>
+    <li><a id="PoolControl-set-solarCheck"></a><b>solarCheck</b> &ndash; erzwingt eine sofortige, frische Solar-Prüfung. Im Unterschied zu <code>check</code> wird dabei die Auskühl-Sperre (<code>solarRetryDelay</code>, gesetzt nach <code>off (zu kalt, Auskuehlschutz)</code>) sowie der Prüfphasen-Timer verworfen, sodass die Solarpumpe unabhängig von der vorherigen Automatik-Entscheidung erneut einen Anlaufversuch macht. Zusätzlich wird das Solarfenster übergangen &ndash; also das Zeitfenster <code>solarStartTime</code>/<code>solarEndTime</code> und die externe Freigabe <code>solarEnable</code> &ndash;, sodass der Check <b>auch ausserhalb des Solarfensters</b> läuft. Die Übergehung bleibt bestehen (überdauert die folgenden Automatik-Zyklen), damit der Auskühlschutz die volle <code>solarSettleTime</code> zum Messen hat; sie wird aufgehoben, sobald Solar aus einem echten Grund abschaltet (<code>off (zu kalt, Auskuehlschutz)</code>, <code>off (Soll erreicht)</code>, <code>off (force off)</code>). Nützlich, wenn die Sonne wieder klar auf den Kollektor scheint, das Modul aber noch in der Wartezeit nach der letzten Auskühlung oder ausserhalb des Zeitfensters steht. (Der Heizbedarf gilt weiterhin: ist der Pool warm genug, läuft Solar nicht an.)</li>
     <li><a id="PoolControl-set-check"></a><b>check</b> &ndash; Steuerzyklus sofort ausführen (respektiert die laufenden Sperren; für einen erzwungenen Solar-Neustart <code>solarCheck</code> verwenden)</li>
   </ul><br>
 
