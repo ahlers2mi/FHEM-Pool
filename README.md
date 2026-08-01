@@ -187,7 +187,7 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 | `control on\|off`       | Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an) |
 | `mode auto\|forceOn\|forceOff` | Betriebsmodus: `forceOn` = Filter + WP zwangsweise heizen (ohne Zeitfenster/Solarindex; Solar bleibt automatisch mit Auskühlschutz), `forceOff` = Filter/Solar/WP zwangsweise aus, `auto` = zurück zur Automatik |
 | `filter on\|off\|auto`  | manueller Filter-Override; wird beim Beginn des Nachtfensters automatisch auf `auto` zurückgesetzt. `mode forceOn/forceOff` hat Vorrang |
-| `targetTemp <°C>`       | Solltemperatur des Pools (wird von `targetTempSchedule` überschrieben, falls gesetzt) |
+| `targetTemp <°C>`       | Solltemperatur des Pools. Bei aktivem `targetTempSchedule` gilt der manuelle Wert als **Override bis zum nächsten Zeitplan-Punkt**, dann übernimmt wieder der Zeitplan |
 | `filterHours <h>`       | gewünschte Filterstunden pro Tag → schreibt das **Attribut** `filterHours` (überlebt Neustarts) |
 | `heatpumpTemp <°C>`     | der Wärmepumpe mitgeteilte Temperatur → schreibt das **Attribut** `heatpumpTemp` (überlebt Neustarts) |
 | `resetRuntime`          | Tageslaufzeitzähler zurücksetzen |
@@ -290,6 +290,11 @@ Umrühren nötig.
 > Soll 32 °C, danach 33,5 °C. Sinnvoll, um tagsüber niedriger zu fahren (die
 > Sonne heizt über die Kuppel ohnehin nach) und abends, wenn die Sonne
 > nachlässt, höher – so schießt der Pool mittags nicht über.
+>
+> **Manueller Override:** Ein `set targetTemp <°C>` bei aktivem Zeitplan gilt
+> **bis zum nächsten Zeitplan-Punkt** (z. B. um 11:00 gesetzt → hält bis 16:00),
+> dann übernimmt wieder der Zeitplan. So kann man kurzfristig abweichen, ohne den
+> Zeitplan zu ändern.
 
 ---
 

@@ -55,6 +55,8 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   „Soll + Offset". Während WP-Anlauf wird der Auskühlschutz ausgesetzt.
 - **`targetTempSchedule`** überschreibt `desiredTemperature` zeitabhängig
   (greift sofort für Solar; für WP voll wirksam, sobald sie smart schaltbar ist).
+  Ein manuelles `set targetTemp` gilt bei aktivem Zeitplan als **Override bis zum
+  nächsten Zeitplan-Punkt** (`.targetHoldSlot` = Slot beim Setzen).
 - **Persistenz der Sollwerte:** `filterHours` und `heatpumpTemp` sind **Attribute**
   (in der `fhem.cfg`, mit `autosave` sofort persistent) → überleben Neustarts
   zuverlässig. `set`-Readings brauchten dagegen ein `save` und gingen bei
