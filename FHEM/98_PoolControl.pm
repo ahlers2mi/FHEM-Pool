@@ -249,6 +249,16 @@ sub PoolControl_Set {
     elsif ($cmd eq "targetTemp") {
         return "targetTemp needs a number" if (!defined $args[0] || $args[0] !~ /^[\d.]+$/);
         readingsSingleUpdate($hash, "desiredTemperature", $args[0] + 0, 1);
+        # Bei aktivem Zeitplan als Override bis zum nächsten Zeitplan-Punkt
+        # halten: aktuellen Slot merken. Ohne Zeitplan gilt der Wert dauerhaft.
+        my $tsched = AttrVal($name, "targetTempSchedule", "");
+        if ($tsched ne "") {
+            my (undef, $slot) = PoolControl_scheduledTarget($tsched);
+            $hash->{".targetHoldSlot"} = defined $slot ? $slot : -1;
+        }
+        else {
+            delete $hash->{".targetHoldSlot"};
+        }
         PoolControl_Control($hash);
         return undef;
     }
@@ -446,11 +456,12 @@ sub PoolControl_hm2min {
 
 # Aktive Solltemperatur aus einem Zeitplan "HH:MM temp HH:MM temp ...".
 # Gilt der zuletzt erreichte Eintrag; vor dem ersten Eintrag des Tages gilt der
-# späteste Eintrag (Umlauf über Mitternacht). Liefert undef bei leerem/ungültigem
-# Plan, sodass der Aufrufer auf den manuellen Wert zurückfällt.
+# späteste Eintrag (Umlauf über Mitternacht). Liefert im Listenkontext
+# (Temperatur, Slot-Startminute); der Slot identifiziert den aktiven Eintrag
+# (für den manuellen Hold). Bei leerem/ungültigem Plan (undef, undef).
 sub PoolControl_scheduledTarget {
     my ($spec) = @_;
-    return undef if (!defined $spec || $spec eq "");
+    return (undef, undef) if (!defined $spec || $spec eq "");
     my @tok = split(/\s+/, $spec);
     my @t   = localtime;
     my $now = $t[2] * 60 + $t[1];
@@ -466,9 +477,9 @@ sub PoolControl_scheduledTarget {
             $bestMin = $m; $best = $temp;
         }
     }
-    return $best + 0     if (defined $best);       # passender Eintrag heute
-    return $lastTemp + 0 if (defined $lastTemp);   # Umlauf: spätester Eintrag gilt
-    return undef;
+    return ($best + 0,     $bestMin) if (defined $best);       # passender Eintrag heute
+    return ($lastTemp + 0, $lastMin) if (defined $lastTemp);   # Umlauf: spätester Eintrag
+    return (undef, undef);
 }
 
 # Liegt "jetzt" im Fenster [start,end)? Unterstützt über Mitternacht.
@@ -520,11 +531,21 @@ sub PoolControl_Control {
     my $index      = PoolControl_num(AttrVal($name, "solarIndexSensor", ""), 0);
     # Solltemperatur: per "set targetTemp" gepflegt; optional zeitabhängig über
     # targetTempSchedule überschrieben (z. B. tagsüber niedriger, abends höher).
+    # Ein manuelles "set targetTemp" hält als Override bis zum nächsten Zeitplan-
+    # Punkt (.targetHoldSlot = Slot beim Setzen); wechselt der Zeitplan-Slot,
+    # fällt der Override und der Zeitplan übernimmt wieder.
     my $target     = ReadingsNum($name, "desiredTemperature", 30);
     my $tsched     = AttrVal($name, "targetTempSchedule", "");
     if ($tsched ne "") {
-        my $st = PoolControl_scheduledTarget($tsched);
-        $target = $st if (defined $st);
+        my ($st, $slot) = PoolControl_scheduledTarget($tsched);
+        my $hold = $hash->{".targetHoldSlot"};
+        if (defined $hold && defined $slot && $slot == $hold) {
+            # Manueller Wert gilt weiter (noch im selben Zeitplan-Slot).
+        }
+        else {
+            delete $hash->{".targetHoldSlot"};   # Zeitplan-Punkt erreicht/kein Hold
+            $target = $st if (defined $st);
+        }
     }
     my $filterTgt  = AttrVal($name, "filterHours",  5) + 0;
     my $hpTemp     = AttrVal($name, "heatpumpTemp", 28) + 0;
@@ -1088,7 +1109,7 @@ sub PoolControl_dumpConfig {
     <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an)</li>
     <li><a id="PoolControl-set-mode"></a><b>mode</b> auto|forceOn|forceOff &ndash; Betriebsmodus. <code>forceOn</code>: Filterpumpe und Wärmepumpe werden zwangsweise eingeschaltet (heizt sofort, ohne Zeitfenster/Solarindex); die Solarthermie läuft weiter automatisch (mit Auskühlschutz). <code>forceOff</code>: Filter, Solarpumpe und Wärmepumpe werden zwangsweise abgeschaltet. <code>auto</code>: zurück zur Automatik.</li>
     <li><a id="PoolControl-set-filter"></a><b>filter</b> on|off|auto &ndash; manueller Filter-Override: <code>on</code> Filter zwangsweise an, <code>off</code> zwangsweise aus, <code>auto</code> zurück zur Automatik. Wird beim Beginn des Nachtfensters automatisch auf <code>auto</code> zurückgesetzt (damit die Nachtfilterung läuft). <code>mode forceOn/forceOff</code> hat Vorrang.</li>
-    <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte). Wird vom Attribut <code>targetTempSchedule</code> überschrieben, falls gesetzt.</li>
+    <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte). Ist <code>targetTempSchedule</code> gesetzt, gilt der manuelle Wert als <b>Override bis zum nächsten Zeitplan-Punkt</b> und wird dann wieder vom Zeitplan übernommen. Ohne Zeitplan gilt der Wert dauerhaft.</li>
     <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag. Schreibt das gleichnamige <b>Attribut</b> <code>filterHours</code> (überlebt Neustarts).</li>
     <li><a id="PoolControl-set-heatpumpTemp"></a><b>heatpumpTemp</b> &lt;°C&gt; &ndash; der Wärmepumpe mitgeteilte Zieltemperatur. Schreibt das gleichnamige <b>Attribut</b> <code>heatpumpTemp</code> (überlebt Neustarts) und reicht den Wert optional über <code>heatpumpTempCmd</code> an das WP-Gerät durch.</li>
     <li><a id="PoolControl-set-resetRuntime"></a><b>resetRuntime</b> &ndash; Tageslaufzeitzähler zurücksetzen</li>
@@ -1212,8 +1233,9 @@ sub PoolControl_dumpConfig {
         Typ: textField. Zeitabhängige Solltemperatur als Liste von <code>HH:MM Temp</code>-Paaren
         (z. B. <code>00:00 32 16:00 33.5</code>). Es gilt jeweils der zuletzt erreichte Eintrag;
         vor dem ersten Eintrag des Tages der späteste (Umlauf über Mitternacht). Überschreibt die
-        per <code>set targetTemp</code> gesetzte <code>desiredTemperature</code>. Leer = keine
-        Zeitsteuerung. Sinnvoll z. B. tagsüber niedriger (Sonne heizt nach), abends höher.</li>
+        per <code>set targetTemp</code> gesetzte <code>desiredTemperature</code> &ndash; ein manuelles
+        <code>set targetTemp</code> gilt jedoch als Override bis zum nächsten Zeitplan-Punkt. Leer =
+        keine Zeitsteuerung. Sinnvoll z. B. tagsüber niedriger (Sonne heizt nach), abends höher.</li>
     <li><a id="PoolControl-attr-interval"></a><b>interval</b><br>
         Typ: textField. Steuerintervall in Sekunden (Default 60).</li>
     <li><a id="PoolControl-attr-disable"></a><b>disable</b> 0|1<br>
