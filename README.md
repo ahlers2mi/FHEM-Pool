@@ -305,7 +305,7 @@ Umrühren nötig.
 | `state`              | Kurzüberblick (Pool/Soll, Filter, Laufzeit; Präfix `[forceOn]`/`[forceOff]` im Handbetrieb) |
 | `controlActive`      | on/off – ist die Steuerung aktiv (`set control`)? |
 | `mode`               | Betriebsmodus (`auto`/`forceOn`/`forceOff`) |
-| `filterManual`       | on/off/auto – manueller Filter-Override (`set filter`), nachts auf `auto` zurückgesetzt |
+| `filter`             | on/off/auto – manueller Filter-Override (`set filter`), nachts auf `auto` zurückgesetzt; heißt wie der set-Befehl, damit `webCmd filter` den Wert anzeigt |
 | `desiredTemperature` | eingestellte Solltemperatur (`set targetTemp`) |
 | `poolTemp`           | aktuelle Pooltemperatur |
 | `inflowTemp`         | Temperatur des einlaufenden Wassers |

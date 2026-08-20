@@ -141,7 +141,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.11.2";
+    $hash->{VERSION} = "0.11.3";
 
     # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
     # sich nach einem Neustart bewusst auf sichere Defaults zurück:
@@ -154,8 +154,8 @@ sub PoolControl_Define {
         ReadingsVal($name, "controlActive", "on"));
     readingsBulkUpdate($hash, "mode",
         ReadingsVal($name, "mode", "auto"));
-    readingsBulkUpdate($hash, "filterManual",
-        ReadingsVal($name, "filterManual", "auto"));
+    readingsBulkUpdate($hash, "filter",
+        ReadingsVal($name, "filter", "auto"));
     readingsBulkUpdate($hash, "desiredTemperature",
         ReadingsVal($name, "desiredTemperature", 30));
     readingsEndUpdate($hash, 0);
@@ -190,6 +190,14 @@ sub PoolControl_migrate {
             CommandAttr(undef, "$name $attrName $old");
         }
         readingsDelete($hash, $oldReading) if (defined $hash->{READINGS}{$oldReading});
+    }
+    # Reading filterManual -> filter umbenannt (damit der Default-webCmd auf
+    # "filter" den aktuellen Wert findet). Alten Wert einmalig uebernehmen.
+    if (defined $hash->{READINGS}{filterManual}) {
+        my $old = ReadingsVal($name, "filterManual", "auto");
+        readingsSingleUpdate($hash, "filter", $old, 0)
+            if (ReadingsVal($name, "filter", "auto") eq "auto" && $old ne "auto");
+        readingsDelete($hash, "filterManual");
     }
     return undef;
 }
@@ -242,7 +250,7 @@ sub PoolControl_Set {
         # sofort auf. mode forceOn/forceOff hat weiterhin Vorrang.
         my $v = $args[0] // "";
         return "filter needs on|off|auto" if ($v !~ /^(on|off|auto)$/);
-        readingsSingleUpdate($hash, "filterManual", $v, 1);
+        readingsSingleUpdate($hash, "filter", $v, 1);
         PoolControl_Control($hash);
         return undef;
     }
@@ -874,15 +882,15 @@ sub PoolControl_Control {
     # hängen bleibt. Eine manuelle Vorgabe *im* Nachtfenster bleibt bestehen.
     if ($inNight) {
         if (!($hash->{".manualNightCleared"} // 0)) {
-            readingsSingleUpdate($hash, "filterManual", "auto", 1)
-                if (ReadingsVal($name, "filterManual", "auto") ne "auto");
+            readingsSingleUpdate($hash, "filter", "auto", 1)
+                if (ReadingsVal($name, "filter", "auto") ne "auto");
             $hash->{".manualNightCleared"} = 1;
         }
     }
     else {
         $hash->{".manualNightCleared"} = 0;
     }
-    my $manual = ReadingsVal($name, "filterManual", "auto");
+    my $manual = ReadingsVal($name, "filter", "auto");
 
     # --- Umrühren / Durchmischung ----------------------------------------
     # Das von der Solarthermie erwärmte Wasser sammelt sich oben im Pool.
@@ -1248,7 +1256,7 @@ sub PoolControl_dumpConfig {
     <p><b>Sollwerte / Betrieb</b> (per <code>set</code> gepflegt)</p>
     <li><b>controlActive</b> &ndash; on|off: ob die Steuerung aktiv ist (<code>set control</code>).</li>
     <li><b>mode</b> &ndash; auto|forceOn|forceOff: aktueller Betriebsmodus (<code>set mode</code>).</li>
-    <li><b>filterManual</b> &ndash; on|off|auto: manueller Filter-Override (<code>set filter</code>); wird nachts automatisch auf <code>auto</code> zurückgesetzt.</li>
+    <li><b>filter</b> &ndash; on|off|auto: manueller Filter-Override (<code>set filter</code>); wird nachts automatisch auf <code>auto</code> zurückgesetzt. Heißt so wie der set-Befehl, damit ein Default-<code>webCmd filter</code> den aktuellen Wert findet.</li>
     <li><b>desiredTemperature</b> &ndash; eingestellte Solltemperatur in °C (<code>set targetTemp</code>).</li>
     <li>Hinweis: <code>filterHours</code> und <code>heatpumpTemp</code> sind jetzt <b>Attribute</b> (nicht mehr Readings), damit sie Neustarts überstehen.</li>
 
