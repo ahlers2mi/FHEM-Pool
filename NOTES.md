@@ -65,7 +65,11 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   Defaults ist hier gewollt).
 - **Manueller Filter-Override** `set filter on|off|auto`: Vorrang nach
   mode-force; wird beim Beginn des Nachtfensters einmalig auf `auto` zurück-
-  gesetzt, damit die Nachtfilterung läuft.
+  gesetzt, damit die Nachtfilterung läuft. Der Zustand liegt im Reading
+  **`filter`** (nicht mehr `filterManual`, v0.11.3) – gleicher Name wie der
+  set-Befehl, damit ein Default-`webCmd filter` den aktuellen Wert findet
+  (sonst zeigte das Dropdown mangels Reading `filter` immer „on"). Migration
+  in `PoolControl_migrate` übernimmt den alten `filterManual`-Wert einmalig.
 - **Tag-Filterung verteilt:** bewusst NICHT gebaut – Nachtfilterung ist gewollt
   (fängt Tagesschmutz, leise, minimaler Wärmeverlust).
 
@@ -146,3 +150,8 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   `.solarLastRunTime` (Zeitstempel des letzten Solarbetriebs) und
   `.solarSettleBonus` (bei jedem echten Anlaufversuch neu bestimmt: `coldExtra`
   bei Idle ≥ `coldAfter`, sonst 0). `solarColdStartExtra 0` deaktiviert.
+- v0.11.3: Reading **`filterManual` → `filter` umbenannt**. Der Default-
+  `webCmd filter` sucht ein gleichnamiges Reading; da es keins gab, zeigte das
+  Dropdown immer „on", obwohl der Override auf `auto` stand. Jetzt schreibt
+  `set filter` das Reading `filter`; `PoolControl_migrate` übernimmt den alten
+  Wert einmalig und löscht `filterManual`.
