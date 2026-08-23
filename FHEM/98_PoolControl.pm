@@ -141,7 +141,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.11.3";
+    $hash->{VERSION} = "0.11.4";
 
     # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
     # sich nach einem Neustart bewusst auf sichere Defaults zurück:
@@ -163,12 +163,15 @@ sub PoolControl_Define {
     PoolControl_setNotifyDev($hash);
 
     RemoveInternalTimer($hash);
-    # Einmalige Migration alter Readings -> Attribute; laeuft nach dem Laden des
-    # Statefiles (deshalb per Timer, nicht inline in Define).
+    # Migration alter Readings -> Attribute und Uebernahme der Zaehlerstaende
+    # aus den Readings; laeuft nach dem Laden des Statefiles (deshalb per Timer,
+    # nicht inline in Define).
     InternalTimer(gettimeofday() + 3, "PoolControl_migrate", $hash, 0);
-    # Erste Steuerung kurz nach dem Start (Geräte müssen geladen sein).
-    InternalTimer(gettimeofday() + 5, "PoolControl_Control", $hash, 0)
-        if ($init_done);
+    # Erste Steuerung kurz nach dem Start (Geräte müssen geladen sein), immer –
+    # auch beim Config-Laden ($init_done == 0). Der Timer feuert ohnehin erst,
+    # wenn die Hauptschleife läuft, also nach Config UND Statefile. Vorher hing
+    # der Start der Steuerung allein am ersten Sensor-Event.
+    InternalTimer(gettimeofday() + 5, "PoolControl_Control", $hash, 0);
 
     return undef;
 }
@@ -199,6 +202,55 @@ sub PoolControl_migrate {
             if (ReadingsVal($name, "filter", "auto") eq "auto" && $old ne "auto");
         readingsDelete($hash, "filterManual");
     }
+    # Laeuft ebenfalls erst nach dem Statefile: Tageslaufzeit zurueckholen.
+    PoolControl_restoreState($hash);
+    return undef;
+}
+
+# ----------------------------------------------------------------------------
+# PoolControl_restoreState
+#   Holt nach einem Neustart die Zaehlerstaende aus den Readings in die
+#   Internals zurueck.
+#   Hintergrund: Internals ($hash->{...}) schreibt FHEM NICHT ins Statefile,
+#   Readings dagegen schon. Die Tageslaufzeit lag ausschliesslich im Internal
+#   .runtimeSec und begann daher nach jedem Neustart wieder bei 0 -> der Filter
+#   arbeitete das komplette Tagessoll (filterHours) noch einmal ab.
+#   Muss nach dem Laden des Statefiles laufen. Aufruf daher aus dem Timer
+#   (PoolControl_migrate) UND aus PoolControl_Control - was zuerst kommt:
+#   ein Sensor-Event kann einen Steuerlauf vor den Timer schieben, und der
+#   wuerde den Zaehler auf 0 initialisieren, bevor er wiederhergestellt ist.
+# ----------------------------------------------------------------------------
+sub PoolControl_restoreState {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+
+    # Genau einmal pro FHEM-Laufzeit.
+    return undef if ($hash->{".restoreDone"});
+    $hash->{".restoreDone"} = 1;
+
+    # Bei einem defmod im laufenden Betrieb ist der Zaehler im Internal
+    # aktueller als das Reading -> nicht anfassen.
+    return undef if (defined $hash->{".runtimeSec"});
+
+    my $today = PoolControl_dayKey($hash);
+    my $day   = ReadingsVal($name, "filterRuntimeDay",   "");
+    my $min   = ReadingsVal($name, "filterRuntimeToday", "");
+
+    # Nur uebernehmen, wenn der gespeicherte Stand vom laufenden Zaehltag ist
+    # (Tageswechsel bei filterNightEnd) - sonst korrekt bei 0 beginnen.
+    if ($day ne "" && $day eq $today && $min =~ /^[\d.]+$/) {
+        $hash->{".runtimeDate"} = $today;
+        $hash->{".runtimeSec"}  = $min * 60;
+        Log3($name, 3, "PoolControl $name: Tageslaufzeit nach Neustart "
+                     . "uebernommen ($min min, Zaehltag $today)");
+    }
+
+    # Hatte das Modul den Filter vor dem Neustart selbst eingeschaltet
+    # (filterState on), darf es ihn auch wieder abschalten. Ohne das gilt die
+    # laufende Pumpe als Fremdschaltung und das Modul stellt sie nie mehr ab.
+    $hash->{".filterByModule"} = 1
+        if (ReadingsVal($name, "filterState", "off") eq "on");
+
     return undef;
 }
 
@@ -285,7 +337,10 @@ sub PoolControl_Set {
     elsif ($cmd eq "resetRuntime") {
         $hash->{".runtimeSec"}  = 0;
         $hash->{".runtimeDate"} = PoolControl_dayKey($hash);
-        readingsSingleUpdate($hash, "filterRuntimeToday", 0, 1);
+        readingsBeginUpdate($hash);
+        readingsBulkUpdate($hash, "filterRuntimeToday", 0);
+        readingsBulkUpdate($hash, "filterRuntimeDay", $hash->{".runtimeDate"});
+        readingsEndUpdate($hash, 1);
         return undef;
     }
     elsif ($cmd eq "solarCheck") {
@@ -349,7 +404,7 @@ sub PoolControl_Attr {
             RemoveInternalTimer($hash);
         }
         elsif ($init_done) {
-            RemoveInternalTimer($hash);
+            RemoveInternalTimer($hash, "PoolControl_Control");
             InternalTimer(gettimeofday() + 2, "PoolControl_Control", $hash, 0);
         }
     }
@@ -418,8 +473,11 @@ sub PoolControl_Notify {
     return if ($own->{".inControl"});
     return if (ReadingsVal($name, "controlActive", "on") ne "on");
 
-    # Entprellen: in 2 s neu berechnen (verschiebt zugleich den periodischen Lauf).
-    RemoveInternalTimer($own);
+    # Entprellen: in 2 s neu berechnen (verschiebt zugleich den periodischen
+    # Lauf). Nur den Control-Timer anfassen – ein pauschales
+    # RemoveInternalTimer($own) hat beim Start auch die noch anstehende
+    # Migration/Wiederherstellung (PoolControl_migrate) mitgelöscht.
+    RemoveInternalTimer($own, "PoolControl_Control");
     InternalTimer(gettimeofday() + 2, "PoolControl_Control", $own, 0);
     return undef;
 }
@@ -520,7 +578,13 @@ sub PoolControl_Control {
     my ($hash) = @_;
     my $name = $hash->{NAME};
 
-    RemoveInternalTimer($hash);
+    # Nur den eigenen Timer verwerfen (nicht die anstehende Migration/
+    # Wiederherstellung), damit ein früher Steuerlauf sie nicht abräumt.
+    RemoveInternalTimer($hash, "PoolControl_Control");
+
+    # Zaehlerstaende aus den Readings holen, falls noch nicht geschehen (siehe
+    # PoolControl_restoreState) - muss VOR der Laufzeitverbuchung passieren.
+    PoolControl_restoreState($hash);
 
     my $interval = AttrVal($name, "interval", 60);
     $interval = 60 if ($interval !~ /^\d+$/ || $interval < 5);
@@ -1005,6 +1069,10 @@ sub PoolControl_Control {
     readingsBulkUpdate($hash, "filterState",         $wantFilter ? "on" : "off");
     readingsBulkUpdate($hash, "filterReason",        $filterReason);
     readingsBulkUpdate($hash, "filterRuntimeToday",  $runMin);
+    # Zaehltag mitschreiben: nur damit die Laufzeit einen Neustart uebersteht
+    # (s. PoolControl_restoreState) - Internals landen nicht im Statefile.
+    readingsBulkUpdate($hash, "filterRuntimeDay",
+        $hash->{".runtimeDate"} // PoolControl_dayKey($hash));
     readingsBulkUpdate($hash, "filterRemaining",     $remainH);
     readingsBulkUpdate($hash, "mixState",            $mixActive ? "active" : "idle");
     readingsBulkUpdate($hash, "solarState",          $solarState);
@@ -1274,6 +1342,11 @@ sub PoolControl_dumpConfig {
         <code>Umruehren</code>, <code>Heizbedarf, keine Quelle</code>, <code>kein Bedarf</code> bzw.
         <code>force on</code>/<code>force off</code> im Handbetrieb.</li>
     <li><b>filterRuntimeToday</b> &ndash; heutige Filterlaufzeit in Minuten (Tageswechsel bei <code>filterNightEnd</code>).</li>
+    <li><b>filterRuntimeDay</b> &ndash; Zähltag, zu dem <code>filterRuntimeToday</code> gehört (<code>YYYY-MM-DD</code>).
+        Dient dazu, die Tageslaufzeit über einen FHEM-Neustart hinweg zu übernehmen: Readings landen im Statefile,
+        die internen Zähler nicht. Passt der Zähltag nach dem Neustart nicht mehr, wird korrekt bei 0 begonnen.
+        Voraussetzung ist ein geschriebenes Statefile (<code>save</code> bzw. <code>shutdown restart</code>);
+        nach einem harten Absturz gilt der letzte gespeicherte Stand.</li>
     <li><b>filterRemaining</b> &ndash; heute noch fehlende Filterzeit in Stunden.</li>
     <li><b>mixState</b> &ndash; active|idle: läuft gerade ein Umrühr-Zyklus?</li>
 
