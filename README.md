@@ -51,6 +51,15 @@ sie hat einen eigenen, langsamen Kreis und läuft bewusst **ohne** Filterpumpe
 (`filterNightStart`–`filterNightEnd`, Default 22:00–06:00) nachgefiltert, bis das
 Tagessoll erreicht ist.
 
+Der Zählerstand **übersteht einen FHEM-Neustart**: er wird aus den Readings
+`filterRuntimeToday` + `filterRuntimeDay` zurückgeholt (Readings landen im
+Statefile, modulinterne Zähler nicht). Ohne das begann die Zählung nach jedem
+Neustart wieder bei 0 und der Filter arbeitete das komplette Tagessoll noch
+einmal ab. Stammt der gespeicherte Stand von einem anderen Zähltag (Tageswechsel
+bei `filterNightEnd`), wird korrekt bei 0 begonnen. Voraussetzung ist ein
+geschriebenes Statefile (`save`, `shutdown restart`); nach einem harten Absturz
+gilt der letzte gespeicherte Stand.
+
 > Der **Filtertag** wechselt am Ende des Nachtfensters (`filterNightEnd`,
 > Default 06:00) – **nicht** um Mitternacht. So wird das nächtliche Nachfiltern
 > über Mitternacht hinweg demselben Tag zugerechnet und das Tagessoll
@@ -315,6 +324,7 @@ Umrühren nötig.
 | `filterState`        | gewünschter Filterzustand on/off |
 | `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. |
 | `filterRuntimeToday` | heutige Filterlaufzeit (Minuten) |
+| `filterRuntimeDay`   | Zähltag zu `filterRuntimeToday` (`YYYY-MM-DD`) – damit die Laufzeit einen FHEM-Neustart übersteht |
 | `filterRemaining`    | heute noch fehlende Filterzeit (Stunden) |
 | `mixState`           | idle/active – läuft gerade ein Umrühr-Zyklus? |
 | `solarState`         | Zustand/Begründung der Solarthermie |

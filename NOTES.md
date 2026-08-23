@@ -150,6 +150,27 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   `.solarLastRunTime` (Zeitstempel des letzten Solarbetriebs) und
   `.solarSettleBonus` (bei jedem echten Anlaufversuch neu bestimmt: `coldExtra`
   bei Idle ≥ `coldAfter`, sonst 0). `solarColdStartExtra 0` deaktiviert.
+- v0.11.4: **Tageslaufzeit übersteht den Neustart.** `.runtimeSec`/`.runtimeDate`
+  lagen nur in Internals – die schreibt FHEM **nicht** ins Statefile (Readings
+  schon). Nach jedem Neustart begann die Zählung bei 0 → der Filter arbeitete
+  das komplette Tagessoll (`filterHours`) erneut ab. Jetzt: neues Reading
+  `filterRuntimeDay` (Zähltag) + `PoolControl_restoreState`, das den Stand aus
+  `filterRuntimeToday` zurückholt, wenn der Zähltag passt. Läuft aus
+  `PoolControl_migrate` **und** aus `PoolControl_Control` (einmalig per
+  `.restoreDone`) – ein Sensor-Event kann einen Steuerlauf vor den Timer
+  schieben und hätte den Zähler sonst auf 0 initialisiert.
+  Zwei Folgefehler mit erledigt:
+  - `RemoveInternalTimer($hash)` (ohne Funktion) in Notify/Control/Attr löschte
+    **alle** Timer des Geräts – also auch die noch anstehende Migration/
+    Wiederherstellung. Jetzt überall funktionsbezogen
+    (`RemoveInternalTimer($hash, "PoolControl_Control")`).
+  - Define plante den ersten Steuerlauf nur `if ($init_done)` – beim FHEM-Start
+    ist der 0, d. h. die Steuerung startete erst mit dem ersten Sensor-Event.
+    Jetzt immer (der Timer feuert ohnehin erst nach Config + Statefile).
+  - `.filterByModule` ist ebenfalls flüchtig: lief der Filter vom Modul
+    geschaltet und FHEM startete neu, galt die Pumpe als Fremdschaltung und
+    wurde **nie mehr abgeschaltet**. Wird jetzt aus `filterState on`
+    rekonstruiert.
 - v0.11.3: Reading **`filterManual` → `filter` umbenannt**. Der Default-
   `webCmd filter` sucht ein gleichnamiges Reading; da es keins gab, zeigte das
   Dropdown immer „on", obwohl der Override auf `auto` stand. Jetzt schreibt
