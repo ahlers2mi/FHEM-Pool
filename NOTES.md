@@ -14,8 +14,13 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   Anlaufzeit. Regelt zwischen Sollwert und Sollwert + ~0,5 °C ab.
   - **Heizt nur bei Durchfluss → die Filterpumpe ist faktisch der WP-Schalter.**
   - **Aktuell auf Zeitschaltuhr**, physisch auf 31 °C (max ~31,5 °C), **noch
-    nicht smart schaltbar** → `d_pool_wp` im Modul ist derzeit praktisch ein
-    Dummy (`heatpumpState` = Absicht, nicht Realität).
+    nicht fernsteuerbar** (Stand 08/2026 bestätigt) → `d_pool_wp` im Modul ist
+    praktisch ein Dummy (`heatpumpState` = Absicht, nicht Realität).
+  - Dafür gibt es seit v0.12.0 `heatpumpReadOnly 1`: das Modul schaltet den
+    Dummy dann nicht mehr, sondern liest ihn nur. So kann der Dummy von Hand
+    (oder später per Zeitschaltuhr-Abbild) die Realität spiegeln, und das Modul
+    kann daraus Konsequenzen ziehen – z. B. bei `heating off` die Filterung
+    aussetzen, damit der Durchfluss nicht heizt.
 - **Kuppel/Abdeckung:** heizt den Pool passiv per Sonne nach (bis ~34,8 °C
   beobachtet). Das Modul kann **nicht kühlen** – Überschuss lässt sich nur durch
   *weniger Zuheizen* begrenzen (→ `targetTempSchedule`).
@@ -150,6 +155,32 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   `.solarLastRunTime` (Zeitstempel des letzten Solarbetriebs) und
   `.solarSettleBonus` (bei jedem echten Anlaufversuch neu bestimmt: `coldExtra`
   bei Idle ≥ `coldAfter`, sonst 0). `solarColdStartExtra 0` deaktiviert.
+- v0.12.0: **Saisonbetrieb „filtern ohne heizen"** (`attr`/`set heating on|off`)
+  + Umrühr-Gate. Anlass: im Herbst wird die Solltemperatur nie erreicht, der
+  Nutzer hatte das Soll deshalb auf 5 °C gestellt – für das Modul heißt das
+  „Soll erreicht" und löste damit gerade das **Umrühren** aus (stündlich, rund
+  um die Uhr). Weil die WP an der Zeitschaltuhr hängt, **heizte** der dabei
+  erzeugte Durchfluss den Pool sogar.
+  - `heating off`: Solar + WP aus, kein Umrühren, Filter erfüllt weiter sein
+    Tagessoll. Als **Attribut** (persistent) – ein Reset auf „heizen" wäre im
+    Herbst genau falsch; als Reading gespiegelt (Dashboard/`webCmd`).
+  - **Umrühren nur, wenn seit dem letzten Mix wirklich eine Wärmequelle lief**
+    (`.heatSinceMix`, gesetzt bei `solarHeating`/`wpActive`, beim Mixstart
+    verbraucht). Vorher genügte „kein Heizbedarf" – das mischte auch dann, wenn
+    gar nicht geheizt wird. Sommerverhalten bleibt: Solar heizt → Soll erreicht
+    → mischen → Temperatur fällt → Solar heizt wieder.
+  - `heatpumpReadOnly 1`: Modul beobachtet die WP nur, schaltet sie nie (WP an
+    Zeitschaltuhr, **noch nicht fernsteuerbar**). Sonst überschreibt das Modul
+    den von Hand gepflegten Dummy sofort wieder.
+  - `heating off` + WP meldet „an" → **Automatik-Filterung aus**
+    (`filterReason: aus: WP an, soll nicht heizen`), damit der Durchfluss nicht
+    heizt. Hand/Zwang geht vor, `lastDecision` warnt dann.
+  - Falle beim Basteln: `filterReason` prüft `$wpActive` **vor** allem anderen –
+    der neue „soll nicht heizen"-Grund musste vor die Quellen-Zweige, sonst
+    stand dort „WP" bzw. „Nachtfilterung", obwohl der Filter aus ist.
+  - Merken: **`heatpumpStateReading` ist ein Reading-Name, kein Gerät** – das
+    Gerät gehört in `heatpumpSwitch`. Steht dort nichts, ignoriert das Modul die
+    WP komplett (weder schalten noch lesen).
 - v0.11.4: **Tageslaufzeit übersteht den Neustart.** `.runtimeSec`/`.runtimeDate`
   lagen nur in Internals – die schreibt FHEM **nicht** ins Statefile (Readings
   schon). Nach jedem Neustart begann die Zählung bei 0 → der Filter arbeitete
