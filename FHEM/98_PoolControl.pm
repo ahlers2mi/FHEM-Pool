@@ -75,6 +75,7 @@ sub PoolControl_Initialize {
     $hash->{AttrList} =
           "disable:0,1 "
         . "interval:textField "
+        . "heating:on,off "
         . "targetTempSchedule:textField "
         # --- Sensoren (Format: <Gerät>:<Reading>) ---
         . "poolSensor:textField "
@@ -113,6 +114,7 @@ sub PoolControl_Initialize {
         # --- Wärmepumpe ---
         . "heatpumpSwitch:textField "
         . "heatpumpStateReading:textField "
+        . "heatpumpReadOnly:0,1 "
         . "heatpumpOnRegex:textField "
         . "heatpumpOnCmd:textField "
         . "heatpumpOffCmd:textField "
@@ -141,7 +143,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.11.4";
+    $hash->{VERSION} = "0.12.0";
 
     # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
     # sich nach einem Neustart bewusst auf sichere Defaults zurück:
@@ -272,6 +274,7 @@ sub PoolControl_Set {
     my $list =
           "control:on,off "
         . "mode:auto,forceOn,forceOff "
+        . "heating:on,off "
         . "filter:on,off,auto "
         . "targetTemp:slider,10,0.5,40 "
         . "filterHours:slider,0,0.5,24 "
@@ -320,6 +323,15 @@ sub PoolControl_Set {
             delete $hash->{".targetHoldSlot"};
         }
         PoolControl_Control($hash);
+        return undef;
+    }
+    elsif ($cmd eq "heating") {
+        # Saisonschalter "nur filtern, nicht heizen". Als Attribut ablegen, damit
+        # er einen Neustart uebersteht - im Herbst waere ein Reset auf "on" (und
+        # damit wieder Heizen) genau falsch.
+        my $v = $args[0] // "";
+        return "heating needs on|off" if ($v !~ /^(on|off)$/);
+        CommandAttr(undef, "$name heating $v");
         return undef;
     }
     elsif ($cmd eq "filterHours") {
@@ -399,6 +411,11 @@ sub PoolControl_Attr {
     my ($cmd, $name, $attrName, $attrVal) = @_;
     my $hash = $defs{$name};
 
+    if ($cmd eq "set" && $attrName eq "heating") {
+        return "heating needs on|off"
+            if (!defined $attrVal || $attrVal !~ /^(on|off)$/);
+    }
+
     if ($attrName eq "disable") {
         if ($cmd eq "set" && $attrVal) {
             RemoveInternalTimer($hash);
@@ -422,7 +439,7 @@ sub PoolControl_Attr {
     }
 
     # Sollwert-Änderung (Attribut) -> Steuerung neu rechnen.
-    if ($init_done && $attrName =~ /^(heatpumpTemp|filterHours)$/) {
+    if ($init_done && $attrName =~ /^(heatpumpTemp|filterHours|heating)$/) {
         InternalTimer(gettimeofday() + 1, "PoolControl_Control", $hash, 0);
     }
 
@@ -703,9 +720,20 @@ sub PoolControl_Control {
 
     my @reason;
 
+    # --- Saisonschalter "nur filtern, nicht heizen" ------------------------
+    # attr heating off (bzw. set heating off): Solar und WP bleiben aus, es wird
+    # auch nicht umgerührt. Der Filter erfüllt weiter sein Tagessoll (Nacht-
+    # fenster) - im Herbst also filtern ohne zu heizen. Sauberer als die
+    # Solltemperatur auf einen Fantasiewert zu stellen: ein niedriges Soll heißt
+    # für das Modul "Soll erreicht", und genau das löst das Umrühren aus.
+    my $heatEnabled = (AttrVal($name, "heating", "on") eq "off") ? 0 : 1;
+
     # --- Heizbedarf --------------------------------------------------------
     my $heatNeeded = 0;
-    if (defined $poolTemp) {
+    if (!$heatEnabled) {
+        push @reason, "Heizen deaktiviert (attr heating off)";
+    }
+    elsif (defined $poolTemp) {
         $heatNeeded = ($poolTemp < $target) ? 1 : 0;
     }
     else {
@@ -770,6 +798,14 @@ sub PoolControl_Control {
             }
             delete $hash->{".solarForceCheck"};   # erzwungenen Lauf beenden
             $solarState = "off (force off)";
+        }
+        elsif (!$heatEnabled) {
+            # Saisonschalter: gar nicht heizen -> Solarpumpe aus.
+            if ($solarOn) {
+                PoolControl_switch($solarDev, $solarOffCmd);
+            }
+            delete $hash->{".solarForceCheck"};   # erzwungenen Lauf beenden
+            $solarState = "off (Heizen deaktiviert)";
         }
         elsif (!$heatNeeded) {
             # Pool warm genug -> Solar aus.
@@ -893,32 +929,49 @@ sub PoolControl_Control {
         my $wpHeatOk = (!defined $poolTemp)
                      || ($heatNeeded && $poolTemp < $hpTemp);
 
-        # forceOn -> WP zwangsweise heizen (Gates übergehen), forceOff -> aus.
-        if    ($mode eq "forceOn")  { $wpWant = 1; }
-        elsif ($mode eq "forceOff") { $wpWant = 0; }
-        else { $wpWant = ($inWindow && $indexOk && $wpHeatOk) ? 1 : 0; }
-
-        if ($wpWant && !$wpOn) {
-            PoolControl_switch($hpDev, $hpOnCmd);
-            $wpState = ($mode eq "forceOn") ? "on (force on)" : "on";
-        }
-        elsif (!$wpWant && $wpOn) {
-            PoolControl_switch($hpDev, $hpOffCmd);
-            $wpState = "off";
+        # heatpumpReadOnly: das Modul beobachtet die WP nur und schaltet sie
+        # nicht. Für eine WP an der Zeitschaltuhr ist das der ehrliche Fall -
+        # sonst überschreibt das Modul den von Hand gepflegten Zustand des
+        # Dummys sofort wieder. Der beobachtete Zustand zählt dann: läuft die WP
+        # und ist Heizen erwünscht, liefert der Filter den nötigen Durchfluss.
+        if (AttrVal($name, "heatpumpReadOnly", 0)) {
+            $wpWant  = ($wpOn && $heatEnabled && $heatNeeded) ? 1 : 0;
+            $wpState = ($wpOn ? "on" : "off") . " (beobachtet)";
         }
         else {
-            $wpState = $wpOn ? "on" : "off";
-        }
+            # forceOn -> WP zwangsweise heizen (Gates übergehen), forceOff -> aus.
+            # Saisonschalter heating off sperrt die WP (nur Handbetrieb kommt
+            # daran vorbei). Hinweis: liegt die WP an einer Zeitschaltuhr, kann
+            # das Modul sie nur "anfragen" - physisch heizt sie weiter, sobald
+            # Wasser fließt.
+            if    ($mode eq "forceOn")  { $wpWant = 1; }
+            elsif ($mode eq "forceOff") { $wpWant = 0; }
+            else { $wpWant = ($heatEnabled && $inWindow && $indexOk && $wpHeatOk) ? 1 : 0; }
 
-        # Begründung für den deaktivierten Zustand protokollieren (nur Automatik).
-        if (!$wpWant && $mode eq "auto") {
-            push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
-            push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
-                if ($inWindow && !$indexOk);
-            if ($inWindow && $indexOk && !$wpHeatOk) {
-                push @reason, (defined $poolTemp && !$heatNeeded)
-                    ? "WP aus: Soll erreicht"
-                    : "WP aus: Pool >= WP-Sollwert ($hpTemp)";
+            if ($wpWant && !$wpOn) {
+                PoolControl_switch($hpDev, $hpOnCmd);
+                $wpState = ($mode eq "forceOn") ? "on (force on)" : "on";
+            }
+            elsif (!$wpWant && $wpOn) {
+                PoolControl_switch($hpDev, $hpOffCmd);
+                $wpState = "off";
+            }
+            else {
+                $wpState = $wpOn ? "on" : "off";
+            }
+
+            # Begründung für den deaktivierten Zustand protokollieren (nur
+            # Automatik). Bei heating off steht der Grund schon oben -> nicht
+            # doppelt melden.
+            if (!$wpWant && $mode eq "auto" && $heatEnabled) {
+                push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
+                push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
+                    if ($inWindow && !$indexOk);
+                if ($inWindow && $indexOk && !$wpHeatOk) {
+                    push @reason, (defined $poolTemp && !$heatNeeded)
+                        ? "WP aus: Soll erreicht"
+                        : "WP aus: Pool >= WP-Sollwert ($hpTemp)";
+                }
             }
         }
     }
@@ -971,9 +1024,20 @@ sub PoolControl_Control {
     # durchmischt -> Mix-Timer zurücksetzen.
     $hash->{".mixLastRun"} = $now2 if ($filterOn);
 
-    # Nur mischen, wenn das Soll erreicht ist (kein Heizbedarf). Ohne
-    # Pooltemperatur-Sensor lässt sich das nicht beurteilen -> nicht mischen.
-    my $mayMix    = (defined $poolTemp && !$heatNeeded) ? 1 : 0;
+    # Es gibt nur etwas zu verteilen, wenn seit dem letzten Umrühren wirklich
+    # eine Wärmequelle gelaufen ist. Ohne das mischt das Modul auch dann im
+    # Stundentakt, wenn überhaupt nicht geheizt wird (Soll unerreichbar tief
+    # oder heating off) - das verteilt nichts, kostet Pumpenlaufzeit und heizt
+    # bei einer an der Zeitschaltuhr hängenden WP sogar unfreiwillig, weil der
+    # Filter den Durchfluss liefert.
+    $hash->{".heatSinceMix"} = 1 if ($solarHeating || $wpActive);
+    delete $hash->{".heatSinceMix"} if (!$heatEnabled);
+
+    # Nur mischen, wenn das Soll erreicht ist (kein Heizbedarf) UND seither
+    # geheizt wurde. Ohne Pooltemperatur-Sensor lässt sich das nicht
+    # beurteilen -> nicht mischen. Bei heating off gar nicht mischen.
+    my $mayMix    = ($heatEnabled && defined $poolTemp && !$heatNeeded
+                     && ($hash->{".heatSinceMix"} // 0)) ? 1 : 0;
     my $mixActive = 0;
     if ($mixInterval > 0) {
         my $until = $hash->{".mixUntil"} // 0;
@@ -990,6 +1054,9 @@ sub PoolControl_Control {
             && ($now2 - $last) >= $mixInterval) {
             $hash->{".mixUntil"} = $now2 + $mixDuration;
             $mixActive = 1;
+            # Ein Umrühren pro Heizepisode: erst wenn wieder geheizt wurde,
+            # gibt es erneut Wärme zu verteilen.
+            delete $hash->{".heatSinceMix"};
         }
     }
 
@@ -997,11 +1064,18 @@ sub PoolControl_Control {
     # Automatik. Solar löst KEINE Filterung aus (eigener langsamer Kreis); der
     # Filter folgt dem WP-Wunsch (wpWant, damit beide im selben Zyklus starten),
     # der Nachtfilterung und dem Umrühren.
+    # Soll nicht geheizt werden und die WP meldet trotzdem "an" (Zeitschaltuhr,
+    # die das Modul nicht fernsteuern kann), dann würde jeder Filterlauf über den
+    # Durchfluss heizen -> Automatik-Filterung aussetzen. Hand-/Zwangsbetrieb
+    # geht weiterhin vor, dafür warnt lastDecision.
+    my $wpBlocksFilter = (!$heatEnabled && $wpOn) ? 1 : 0;
+
     my $wantFilter;
     if    ($mode eq "forceOn")   { $wantFilter = 1; }
     elsif ($mode eq "forceOff")  { $wantFilter = 0; }
     elsif ($manual eq "on")      { $wantFilter = 1; }
     elsif ($manual eq "off")     { $wantFilter = 0; }
+    elsif ($wpBlocksFilter)      { $wantFilter = 0; }
     else { $wantFilter = ($wpWant || $nightFill || $mixActive) ? 1 : 0; }
 
     if ($filterDev ne "") {
@@ -1027,14 +1101,29 @@ sub PoolControl_Control {
         : $mode eq "forceOff" ? "force off"
         : $manual eq "on"     ? "manuell an"
         : $manual eq "off"    ? "manuell aus"
+        # Vor den Quellen pruefen: die WP kann "an" melden (Zeitschaltuhr),
+        # obwohl gerade bewusst nicht geheizt wird - dann laeuft der Filter
+        # nicht und "WP"/"Nachtfilterung" waere die falsche Begruendung.
+        : $wpBlocksFilter     ? "aus: WP an, soll nicht heizen"
         : ($wpActive && $solarHeating) ? "WP+Solar"
         : $wpActive     ? "WP"
         : $solarHeating ? "Solar"
         : $solarActive  ? "Solar (Anlauf)"
-        : $nightFill    ? "Nachtfilterung"
-        : $mixActive    ? "Umruehren"
+        : $nightFill      ? "Nachtfilterung"
+        : $mixActive      ? "Umruehren"
+        : !$heatEnabled   ? "nur filtern (Heizen aus)"
         : $heatNeeded   ? "Heizbedarf, keine Quelle"
         :                 "kein Bedarf";
+
+    # Warnen, wenn trotz abgeschaltetem Heizen gefiltert wird und die WP dabei
+    # "an" meldet: dann liefert die Filterpumpe den Durchfluss und die WP heizt
+    # trotzdem. Typisch, wenn die WP an einer Zeitschaltuhr hängt - dagegen hilft
+    # nur, sie physisch abzuschalten.
+    if ($wpBlocksFilter) {
+        push @reason, $wantFilter
+            ? "Achtung: Filter laeuft (Hand/Zwang) und WP meldet an -> heizt trotzdem"
+            : "Filter aus: WP meldet an, es soll nicht geheizt werden";
+    }
 
     # ======================================================================
     # 4) Wasserqualität (optional, informativ)
@@ -1066,6 +1155,10 @@ sub PoolControl_Control {
     readingsBulkUpdate($hash, "targetTemp",          $target);
     readingsBulkUpdate($hash, "solarIndex",          $index);
     readingsBulkUpdate($hash, "heatingNeeded",       $heatNeeded ? "yes" : "no");
+    # Saisonschalter als Reading spiegeln: das Attribut ist die Quelle der
+    # Wahrheit (persistent), das Reading macht ihn im Dashboard/webCmd sichtbar
+    # (webCmd braucht ein gleichnamiges Reading, s. Reading "filter").
+    readingsBulkUpdate($hash, "heating",             $heatEnabled ? "on" : "off");
     readingsBulkUpdate($hash, "filterState",         $wantFilter ? "on" : "off");
     readingsBulkUpdate($hash, "filterReason",        $filterReason);
     readingsBulkUpdate($hash, "filterRuntimeToday",  $runMin);
@@ -1133,12 +1226,14 @@ sub PoolControl_dumpConfig {
     my ($hash) = @_;
     my $name = $hash->{NAME};
     my $out  = "PoolControl '$name' Konfiguration:\n";
-    for my $a (qw(poolSensor inflowSensor solarIndexSensor qualitySensor
+    for my $a (qw(heating
+                  poolSensor inflowSensor solarIndexSensor qualitySensor
                   filterSwitch solarSwitch heatpumpSwitch
                   solarStartTime solarEndTime solarEnable solarEnableMin
                   solarHysteresis solarHysteresisFilter
                   wpStartTime wpEndTime solarIndexMin solarIndexOn solarIndexOff
                   heatpumpOffset heatpumpRegBand heatpumpRampTime heatpumpTemp
+                  heatpumpReadOnly
                   filterNightStart filterNightEnd filterHours interval
                   targetTempSchedule)) {
         $out .= sprintf("  %-18s = %s\n", $a, AttrVal($name, $a, "(default)"));
@@ -1184,6 +1279,7 @@ sub PoolControl_dumpConfig {
   <ul>
     <li><a id="PoolControl-set-control"></a><b>control</b> on|off &ndash; Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an)</li>
     <li><a id="PoolControl-set-mode"></a><b>mode</b> auto|forceOn|forceOff &ndash; Betriebsmodus. <code>forceOn</code>: Filterpumpe und Wärmepumpe werden zwangsweise eingeschaltet (heizt sofort, ohne Zeitfenster/Solarindex); die Solarthermie läuft weiter automatisch (mit Auskühlschutz). <code>forceOff</code>: Filter, Solarpumpe und Wärmepumpe werden zwangsweise abgeschaltet. <code>auto</code>: zurück zur Automatik.</li>
+    <li><a id="PoolControl-set-heating"></a><b>heating</b> on|off &ndash; Saisonschalter &bdquo;nur filtern, nicht heizen&ldquo;. Bei <code>off</code> bleiben Solarthermie und Wärmepumpe aus und es wird <b>nicht umgerührt</b>; die Filterpumpe erfüllt weiter ihr Tagessoll (<code>filterHours</code>, i. d. R. im Nachtfenster). Schreibt das gleichnamige <b>Attribut</b> <code>heating</code>, überlebt also Neustarts &ndash; im Herbst wäre ein Reset auf <code>on</code> genau falsch. Das ist der saubere Weg, das Heizen abzuschalten: eine künstlich niedrige Solltemperatur bedeutet für das Modul &bdquo;Soll erreicht&ldquo; und löst damit gerade das Umrühren aus.</li>
     <li><a id="PoolControl-set-filter"></a><b>filter</b> on|off|auto &ndash; manueller Filter-Override: <code>on</code> Filter zwangsweise an, <code>off</code> zwangsweise aus, <code>auto</code> zurück zur Automatik. Wird beim Beginn des Nachtfensters automatisch auf <code>auto</code> zurückgesetzt (damit die Nachtfilterung läuft). <code>mode forceOn/forceOff</code> hat Vorrang.</li>
     <li><a id="PoolControl-set-targetTemp"></a><b>targetTemp</b> &lt;°C&gt; &ndash; Solltemperatur (0,5er-Schritte). Ist <code>targetTempSchedule</code> gesetzt, gilt der manuelle Wert als <b>Override bis zum nächsten Zeitplan-Punkt</b> und wird dann wieder vom Zeitplan übernommen. Ohne Zeitplan gilt der Wert dauerhaft.</li>
     <li><a id="PoolControl-set-filterHours"></a><b>filterHours</b> &lt;h&gt; &ndash; gewünschte Filterstunden pro Tag. Schreibt das gleichnamige <b>Attribut</b> <code>filterHours</code> (überlebt Neustarts).</li>
@@ -1233,6 +1329,14 @@ sub PoolControl_dumpConfig {
     <p><b>Umrühren / Durchmischung</b></p>
     <li>Umgerührt wird nur, wenn das Soll erreicht ist (kein Heizbedarf), um die
         oben gesammelte Wärme zu verteilen. Bei Heizbedarf wird nicht gemischt.</li>
+    <li>Zusätzlich muss seit dem letzten Umrühren wirklich eine Wärmequelle
+        gelaufen sein (Solar heizt bzw. WP an) &ndash; sonst gibt es nichts zu
+        verteilen. Ohne diese Bedingung würde das Modul auch dann im Stundentakt
+        mischen, wenn überhaupt nicht geheizt wird (z. B. unerreichbar tiefes
+        Soll oder <code>heating off</code>): das verteilt nichts, kostet
+        Pumpenlaufzeit und heizt bei einer nicht fernsteuerbaren Wärmepumpe sogar
+        unfreiwillig, weil der Filter den Durchfluss liefert. Bei
+        <code>heating off</code> wird gar nicht gemischt.</li>
     <li><a id="PoolControl-attr-mixInterval"></a><b>mixInterval</b><br>
         Typ: Slider (0–7200 s). Mindestabstand zwischen Mix-Zyklen ohne Zirkulation; 0 = aus (Default 3600).</li>
     <li><a id="PoolControl-attr-mixDuration"></a><b>mixDuration</b><br>
@@ -1274,9 +1378,25 @@ sub PoolControl_dumpConfig {
 
     <p><b>Wärmepumpe</b></p>
     <li><a id="PoolControl-attr-heatpumpSwitch"></a><b>heatpumpSwitch</b><br>
-        Typ: textField. Schaltgerät der Wärmepumpe.</li>
+        Typ: textField. <b>Gerätename</b> der Wärmepumpe (bzw. des Dummys, der sie
+        abbildet). Leer = das Modul ignoriert die Wärmepumpe vollständig: es
+        schaltet sie nicht und liest auch ihren Zustand nicht.</li>
     <li><a id="PoolControl-attr-heatpumpStateReading"></a><b>heatpumpStateReading</b><br>
-        Typ: textField. Reading des WP-Zustands (Default <code>state</code>).</li>
+        Typ: textField. <b>Name des Readings</b> innerhalb von
+        <code>heatpumpSwitch</code>, in dem der Ein/Aus-Zustand steht (Default
+        <code>state</code>). Hier gehört <b>kein Gerätename</b> hinein &ndash; das
+        Gerät steht in <code>heatpumpSwitch</code>.</li>
+    <li><a id="PoolControl-attr-heatpumpReadOnly"></a><b>heatpumpReadOnly</b><br>
+        Typ: 0|1 (Default 0). Bei <code>1</code> <b>beobachtet</b> das Modul die
+        Wärmepumpe nur und schaltet sie nie. Gedacht für eine WP, die sich (noch)
+        nicht fernsteuern lässt, z. B. an einer Zeitschaltuhr: der zugeordnete
+        Dummy wird von Hand gepflegt und spiegelt die Realität &ndash; ohne dieses
+        Attribut überschreibt das Modul ihn sofort wieder. Der beobachtete Zustand
+        zählt dann für die Entscheidungen: läuft die WP und ist Heizen erwünscht,
+        liefert die Filterpumpe den nötigen Durchfluss; ist <code>heating off</code>
+        und die WP meldet trotzdem <code>on</code>, setzt das Modul die
+        Automatik-Filterung aus, weil jeder Durchfluss sonst heizen würde
+        (Hand-/Zwangsbetrieb geht weiter vor, <code>lastDecision</code> warnt dann).</li>
     <li><a id="PoolControl-attr-heatpumpOnRegex"></a><b>heatpumpOnRegex</b><br>
         Typ: textField. Regex für den Ein-Zustand (Default <code>on|ON|1</code>).</li>
     <li><a id="PoolControl-attr-heatpumpOnCmd"></a><b>heatpumpOnCmd</b><br>
@@ -1312,6 +1432,11 @@ sub PoolControl_dumpConfig {
         per <code>set targetTemp</code> gesetzte <code>desiredTemperature</code> &ndash; ein manuelles
         <code>set targetTemp</code> gilt jedoch als Override bis zum nächsten Zeitplan-Punkt. Leer =
         keine Zeitsteuerung. Sinnvoll z. B. tagsüber niedriger (Sonne heizt nach), abends höher.</li>
+    <li><a id="PoolControl-attr-heating"></a><b>heating</b> on|off<br>
+        Default <code>on</code>. <code>off</code> = Saisonbetrieb &bdquo;nur filtern,
+        nicht heizen&ldquo;: Solarthermie und Wärmepumpe bleiben aus, es wird nicht
+        umgerührt, die Filterpumpe erfüllt weiter ihr Tagessoll. Komfortabel über
+        <code>set heating on|off</code> zu schalten.</li>
     <li><a id="PoolControl-attr-interval"></a><b>interval</b><br>
         Typ: textField. Steuerintervall in Sekunden (Default 60).</li>
     <li><a id="PoolControl-attr-disable"></a><b>disable</b> 0|1<br>
@@ -1325,6 +1450,7 @@ sub PoolControl_dumpConfig {
     <li><b>controlActive</b> &ndash; on|off: ob die Steuerung aktiv ist (<code>set control</code>).</li>
     <li><b>mode</b> &ndash; auto|forceOn|forceOff: aktueller Betriebsmodus (<code>set mode</code>).</li>
     <li><b>filter</b> &ndash; on|off|auto: manueller Filter-Override (<code>set filter</code>); wird nachts automatisch auf <code>auto</code> zurückgesetzt. Heißt so wie der set-Befehl, damit ein Default-<code>webCmd filter</code> den aktuellen Wert findet.</li>
+    <li><b>heating</b> &ndash; on|off: Spiegel des Attributs <code>heating</code> (<code>set heating</code>). Das Attribut ist die Quelle der Wahrheit (persistent), das Reading macht den Zustand im Dashboard sichtbar und für <code>webCmd heating</code> auflösbar.</li>
     <li><b>desiredTemperature</b> &ndash; eingestellte Solltemperatur in °C (<code>set targetTemp</code>).</li>
     <li>Hinweis: <code>filterHours</code> und <code>heatpumpTemp</code> sind jetzt <b>Attribute</b> (nicht mehr Readings), damit sie Neustarts überstehen.</li>
 
@@ -1333,13 +1459,17 @@ sub PoolControl_dumpConfig {
     <li><b>inflowTemp</b> &ndash; Temperatur des einlaufenden Wassers in °C (aus <code>inflowSensor</code>).</li>
     <li><b>targetTemp</b> &ndash; aktuell wirksame Solltemperatur in °C (entspricht <code>desiredTemperature</code>).</li>
     <li><b>solarIndex</b> &ndash; aktueller Solarindex (verfügbarer Stromüberschuss) aus <code>solarIndexSensor</code>.</li>
-    <li><b>heatingNeeded</b> &ndash; yes|no: besteht Heizbedarf (<code>poolTemp &lt; targetTemp</code>)?</li>
+    <li><b>heatingNeeded</b> &ndash; yes|no: besteht Heizbedarf (<code>poolTemp &lt; targetTemp</code>)?
+        Bei <code>heating off</code> immer <code>no</code> &ndash; es soll ja nicht geheizt werden.</li>
 
     <p><b>Filter / Umrühren</b></p>
     <li><b>filterState</b> &ndash; on|off: vom Modul gewünschter Filterzustand.</li>
     <li><b>filterReason</b> &ndash; Begründung des Filterzustands: <code>WP+Solar</code>, <code>WP</code>,
         <code>Solar</code> (Filter dabei bewusst aus), <code>Solar (Anlauf)</code>, <code>Nachtfilterung</code>,
-        <code>Umruehren</code>, <code>Heizbedarf, keine Quelle</code>, <code>kein Bedarf</code> bzw.
+        <code>Umruehren</code>, <code>Heizbedarf, keine Quelle</code>, <code>kein Bedarf</code>,
+        <code>nur filtern (Heizen aus)</code> (bei <code>heating off</code>),
+        <code>aus: WP an, soll nicht heizen</code> (WP meldet an, obwohl nicht geheizt werden soll)
+        bzw. <code>manuell an</code>/<code>manuell aus</code> (<code>set filter</code>) und
         <code>force on</code>/<code>force off</code> im Handbetrieb.</li>
     <li><b>filterRuntimeToday</b> &ndash; heutige Filterlaufzeit in Minuten (Tageswechsel bei <code>filterNightEnd</code>).</li>
     <li><b>filterRuntimeDay</b> &ndash; Zähltag, zu dem <code>filterRuntimeToday</code> gehört (<code>YYYY-MM-DD</code>).
@@ -1354,12 +1484,15 @@ sub PoolControl_dumpConfig {
     <li><b>solarState</b> &ndash; Zustand/Begründung der Solarpumpe, z. B. <code>on (heizt)</code>,
         <code>on (Pruefphase)</code>, <code>on (WP-Anlauf)</code>, <code>off (zu kalt, Auskuehlschutz)</code>,
         <code>off (Wartezeit nach Auskuehlung)</code>, <code>off (ausserhalb Solarfenster)</code>,
-        <code>off (keine Solarenergie)</code>, <code>off (Soll erreicht)</code>.</li>
+        <code>off (keine Solarenergie)</code>, <code>off (Soll erreicht)</code>,
+        <code>off (Heizen deaktiviert)</code> (bei <code>heating off</code>).</li>
     <li><b>solarHeating</b> &ndash; yes|no: heizt die Solarthermie real (nutzbarer Solarhub über der flussabhängigen Schwelle bzw. WP-Anlaufphase)?</li>
 
     <p><b>Wärmepumpe</b></p>
     <li><b>heatpumpState</b> &ndash; Zustand der WP-Freigabe: <code>off</code>, <code>on</code>,
-        <code>on (force on)</code>.</li>
+        <code>on (force on)</code>. Mit <code>heatpumpReadOnly 1</code> stattdessen
+        <code>on (beobachtet)</code>/<code>off (beobachtet)</code> &ndash; das Modul schaltet die WP
+        dann nicht, sondern übernimmt den gemeldeten Zustand.</li>
     <li><b>heatpumpEffective</b> &ndash; erwartete Einlauftemperatur der WP in °C:
         <code>min(poolTemp + heatpumpOffset, heatpumpTemp + heatpumpRegBand)</code> –
         voller Hub über dem Pool, in Sollnähe durch die Eigenregelung der WP gedeckelt.

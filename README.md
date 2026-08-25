@@ -159,6 +159,36 @@ Eigenregelung der WP gedeckelt. Ein Vergleich mit `inflowTemp` zeigt, ob die WP
 wie erwartet liefert. Das Reading ist nur informativ; der gleiche Wert fließt
 aber als WP-Anteil in den Auskühlschutz ein.
 
+> **Nicht fernsteuerbare WP:** Hängt die Wärmepumpe an einer Zeitschaltuhr, kann
+> das Modul sie nur *anfragen* – physisch heizt sie, sobald Wasser fließt. Die
+> **Filterpumpe ist dann faktisch der WP-Schalter.** Mit `heatpumpReadOnly 1`
+> schaltet das Modul die WP nie, sondern übernimmt den (von Hand gepflegten)
+> gemeldeten Zustand – sonst überschreibt es den Dummy sofort wieder.
+
+### Saisonbetrieb: filtern ohne heizen
+Im Herbst soll oft noch gefiltert, aber nicht mehr geheizt werden. Dafür gibt es
+`set <name> heating off` (Attribut `heating`):
+
+- Solarthermie und Wärmepumpe bleiben **aus**,
+- es wird **nicht umgerührt**,
+- die Filterpumpe erfüllt weiter ihr Tagessoll (`filterHours`) – in der Praxis
+  also im Nachtfenster.
+
+Der Schalter liegt als **Attribut** vor und übersteht damit Neustarts; ein Reset
+auf „heizen" wäre im Herbst genau falsch.
+
+> **Nicht** stattdessen die Solltemperatur künstlich tief setzen: für das Modul
+> heißt „Soll erreicht" *Wärme verteilen*, und genau das löst das Umrühren aus –
+> mit einer per Zeitschaltuhr laufenden WP heizt der dabei erzeugte Durchfluss
+> den Pool dann sogar. Ein manuelles `set targetTemp` wird bei aktivem
+> `targetTempSchedule` ohnehin am nächsten Zeitplan-Punkt wieder überschrieben.
+
+Meldet die WP trotz `heating off` „an" (Zeitschaltuhr), setzt das Modul die
+**Automatik-Filterung aus**, damit der Durchfluss nicht heizt; `filterReason`
+zeigt dann `aus: WP an, soll nicht heizen`. Hand- und Zwangsbetrieb
+(`set filter on`, `mode forceOn`) gehen weiter vor – `lastDecision` warnt in
+diesem Fall, dass trotzdem geheizt wird.
+
 ---
 
 ## Installation
@@ -195,6 +225,7 @@ Alle Ein-/Ausgänge werden über Attribute zugeordnet (siehe Beispiel-Setup).
 |-------------------------|--------------|
 | `control on\|off`       | Steuerung aktivieren/deaktivieren (off = Modul fasst nichts an) |
 | `mode auto\|forceOn\|forceOff` | Betriebsmodus: `forceOn` = Filter + WP zwangsweise heizen (ohne Zeitfenster/Solarindex; Solar bleibt automatisch mit Auskühlschutz), `forceOff` = Filter/Solar/WP zwangsweise aus, `auto` = zurück zur Automatik |
+| `heating on\|off`       | Saisonschalter „nur filtern, nicht heizen". `off` = Solar und WP bleiben aus, es wird **nicht umgerührt**, der Filter erfüllt weiter sein Tagessoll → schreibt das **Attribut** `heating` (überlebt Neustarts) |
 | `filter on\|off\|auto`  | manueller Filter-Override; wird beim Beginn des Nachtfensters automatisch auf `auto` zurückgesetzt. `mode forceOn/forceOff` hat Vorrang |
 | `targetTemp <°C>`       | Solltemperatur des Pools. Bei aktivem `targetTempSchedule` gilt der manuelle Wert als **Override bis zum nächsten Zeitplan-Punkt**, dann übernimmt wieder der Zeitplan |
 | `filterHours <h>`       | gewünschte Filterstunden pro Tag → schreibt das **Attribut** `filterHours` (überlebt Neustarts) |
@@ -245,6 +276,14 @@ Zirkulieren ohne Wärmezufuhr verteilt nichts und kühlt über den Umwälzverlus
 sogar leicht aus. Während ohnehin gefiltert/geheizt wird, ist kein separates
 Umrühren nötig.
 
+Zusätzlich muss seit dem letzten Umrühren **wirklich eine Wärmequelle gelaufen
+sein** (Solar heizt bzw. WP an) – sonst gibt es nichts zu verteilen. Ohne diese
+Bedingung mischt das Modul auch dann im Stundentakt, wenn überhaupt nicht
+geheizt wird (unerreichbar tiefes Soll oder `heating off`): das verteilt nichts,
+kostet Pumpenlaufzeit und **heizt bei einer nicht fernsteuerbaren Wärmepumpe
+sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
+`heating off` wird gar nicht gemischt.
+
 | Attribut       | Default | Beschreibung |
 |----------------|---------|--------------|
 | `mixInterval`  | `3600`  | Mindestabstand zwischen Mix-Zyklen ohne Zirkulation (s); `0` = aus |
@@ -271,8 +310,9 @@ Umrühren nötig.
 ### Wärmepumpe
 | Attribut               | Default     | Beschreibung |
 |------------------------|-------------|--------------|
-| `heatpumpSwitch`       | –           | Gerät der Wärmepumpe |
-| `heatpumpStateReading` | `state`     | Status-Reading |
+| `heatpumpSwitch`       | –           | **Gerätename** der Wärmepumpe (bzw. des Dummys). Leer = WP wird komplett ignoriert (weder geschaltet noch gelesen) |
+| `heatpumpStateReading` | `state`     | **Name des Readings** innerhalb von `heatpumpSwitch`, in dem on/off steht – hier gehört *kein* Gerätename hinein |
+| `heatpumpReadOnly`     | `0`         | `1` = Modul **beobachtet** die WP nur und schaltet sie nie (WP an der Zeitschaltuhr, nicht fernsteuerbar). Der gemeldete Zustand zählt dann für die Entscheidungen; bei `heating off` + WP „an" setzt das Modul die Automatik-Filterung aus, damit der Durchfluss nicht heizt |
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
@@ -291,6 +331,7 @@ Umrühren nötig.
 | Attribut   | Default | Beschreibung |
 |------------|---------|--------------|
 | `targetTempSchedule` | – (leer) | Zeitabhängige Solltemperatur, Liste von `HH:MM Temp`-Paaren (z. B. `00:00 32 16:00 33.5`). Überschreibt `set targetTemp`. Leer = keine Zeitsteuerung |
+| `heating`  | `on`    | `off` = Saisonbetrieb „nur filtern, nicht heizen" (Solar + WP aus, kein Umrühren; Filter erfüllt sein Tagessoll). Bequem per `set heating on\|off` |
 | `interval` | `60`    | Steuerintervall in Sekunden |
 | `disable`  | `0`     | 1 = Modul deaktivieren |
 
@@ -315,6 +356,7 @@ Umrühren nötig.
 | `controlActive`      | on/off – ist die Steuerung aktiv (`set control`)? |
 | `mode`               | Betriebsmodus (`auto`/`forceOn`/`forceOff`) |
 | `filter`             | on/off/auto – manueller Filter-Override (`set filter`), nachts auf `auto` zurückgesetzt; heißt wie der set-Befehl, damit `webCmd filter` den Wert anzeigt |
+| `heating`            | on/off – Spiegel des Attributs `heating` (Quelle der Wahrheit bleibt das Attribut); macht den Saisonschalter im Dashboard sichtbar |
 | `desiredTemperature` | eingestellte Solltemperatur (`set targetTemp`) |
 | `poolTemp`           | aktuelle Pooltemperatur |
 | `inflowTemp`         | Temperatur des einlaufenden Wassers |
@@ -322,7 +364,7 @@ Umrühren nötig.
 | `solarIndex`         | aktueller Solarindex |
 | `heatingNeeded`      | yes/no |
 | `filterState`        | gewünschter Filterzustand on/off |
-| `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. |
+| `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf / nur filtern (Heizen aus) / aus: WP an, soll nicht heizen). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. |
 | `filterRuntimeToday` | heutige Filterlaufzeit (Minuten) |
 | `filterRuntimeDay`   | Zähltag zu `filterRuntimeToday` (`YYYY-MM-DD`) – damit die Laufzeit einen FHEM-Neustart übersteht |
 | `filterRemaining`    | heute noch fehlende Filterzeit (Stunden) |
