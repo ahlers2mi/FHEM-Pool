@@ -172,9 +172,19 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   - `heatpumpReadOnly 1`: Modul beobachtet die WP nur, schaltet sie nie (WP an
     Zeitschaltuhr, **noch nicht fernsteuerbar**). Sonst überschreibt das Modul
     den von Hand gepflegten Dummy sofort wieder.
-  - `heating off` + WP meldet „an" → **Automatik-Filterung aus**
-    (`filterReason: aus: WP an, soll nicht heizen`), damit der Durchfluss nicht
-    heizt. Hand/Zwang geht vor, `lastDecision` warnt dann.
+  - `heating off` + WP hat Strom → **Automatik-Filterung aus**, damit der
+    Durchfluss nicht heizt. „Hat Strom" = WP meldet `on`
+    (`filterReason: aus: WP an, soll nicht heizen`) **oder** – nur mit
+    `heatpumpReadOnly 1` – die Zeit liegt im Fenster
+    `wpStartTime`–`wpEndTime` (`aus: WP-Zeitfenster, soll nicht heizen`).
+    Letzteres ist der Praxisfall: bei der Zeitschaltuhr-WP beschreibt das
+    Fenster deren Schaltzeit, der Schutz greift also **ohne** dass der Dummy
+    von Hand gepflegt werden muss. Hand/Zwang geht vor, `lastDecision` warnt.
+  - **Anlagenstand 08/2026:** Zeitschaltuhr der WP = **09:00–19:00**
+    (`wpStartTime`/`wpEndTime` entsprechend gesetzt), Nachtfenster 22:00–06:00.
+    Überschneidungsfrei → die Nachtfilterung erfüllt das Tagessoll komplett,
+    ohne die WP je anzustoßen. Bei Änderung der Uhr die Attribute mitziehen,
+    sonst greift der Schutz am falschen Zeitpunkt.
   - Falle beim Basteln: `filterReason` prüft `$wpActive` **vor** allem anderen –
     der neue „soll nicht heizen"-Grund musste vor die Quellen-Zweige, sonst
     stand dort „WP" bzw. „Nachtfilterung", obwohl der Filter aus ist.
