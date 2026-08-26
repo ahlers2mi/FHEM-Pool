@@ -90,7 +90,7 @@ sub PoolControl_Initialize {
         . "filterOffCmd:textField "
         . "filterNightStart:textField "
         . "filterNightEnd:textField "
-        . "filterHours:slider,0,0.5,24 "
+        . "filterHours:slider,0,0.5,24,1 "
         # --- Umrühren / Durchmischung ---
         . "mixInterval:slider,0,60,7200 "
         . "mixDuration:slider,0,30,1800 "
@@ -100,8 +100,8 @@ sub PoolControl_Initialize {
         . "solarOnRegex:textField "
         . "solarOnCmd:textField "
         . "solarOffCmd:textField "
-        . "solarHysteresis:slider,0,0.1,5 "
-        . "solarHysteresisFilter:slider,0,0.1,5 "
+        . "solarHysteresis:slider,0,0.1,5,1 "
+        . "solarHysteresisFilter:slider,0,0.1,5,1 "
         . "solarSettleTime:slider,0,30,1800 "
         . "solarRetryDelay:slider,0,60,7200 "
         . "solarColdStartAfter:slider,0,600,86400 "
@@ -118,9 +118,9 @@ sub PoolControl_Initialize {
         . "heatpumpOnRegex:textField "
         . "heatpumpOnCmd:textField "
         . "heatpumpOffCmd:textField "
-        . "heatpumpTemp:slider,10,0.5,40 "
-        . "heatpumpOffset:slider,0,0.1,5 "
-        . "heatpumpRegBand:slider,0,0.1,5 "
+        . "heatpumpTemp:slider,10,0.5,40,1 "
+        . "heatpumpOffset:slider,0,0.1,5,1 "
+        . "heatpumpRegBand:slider,0,0.1,5,1 "
         . "heatpumpRampTime:slider,0,30,1800 "
         . "heatpumpTempCmd:textField "
         . "wpStartTime:textField "
@@ -143,7 +143,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.12.1";
+    $hash->{VERSION} = "0.12.2";
 
     # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
     # sich nach einem Neustart bewusst auf sichere Defaults zurück:
@@ -276,9 +276,9 @@ sub PoolControl_Set {
         . "mode:auto,forceOn,forceOff "
         . "heating:on,off "
         . "filter:on,off,auto "
-        . "targetTemp:slider,10,0.5,40 "
-        . "filterHours:slider,0,0.5,24 "
-        . "heatpumpTemp:slider,10,0.5,40 "
+        . "targetTemp:slider,10,0.5,40,1 "
+        . "filterHours:slider,0,0.5,24,1 "
+        . "heatpumpTemp:slider,10,0.5,40,1 "
         . "resetRuntime:noArg "
         . "solarCheck:noArg "
         . "check:noArg";

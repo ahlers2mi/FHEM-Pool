@@ -155,6 +155,23 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   `.solarLastRunTime` (Zeitstempel des letzten Solarbetriebs) und
   `.solarSettleBonus` (bei jedem echten Anlaufversuch neu bestimmt: `coldExtra`
   bei Idle ≥ `coldAfter`, sonst 0). `solarColdStartExtra 0` deaktiviert.
+- v0.12.2: **Slider brauchen ein Float-Flag.** Alle Slider mit Dezimal-Step
+  (`solarHysteresis`, `solarHysteresisFilter`, `heatpumpOffset`,
+  `heatpumpRegBand` je 0.1; `filterHours`, `heatpumpTemp`, `targetTemp` je 0.5)
+  hatten nur `slider,<min>,<step>,<max>`. FHEMWEB parst in `FW_createSlider`
+  (`www/pgm2/fhemweb.js`):
+  `var flt = (vArr.length == 5 && vArr[4] == "1")` – **ohne** dieses fünfte Feld
+  läuft der Wert durch `parseInt()`, der Slider rastet also auf **ganze Zahlen**,
+  egal welcher Step angegeben ist. Deshalb liessen sich 0,3 °C & Co. nur per
+  Kommandozeile setzen. Jetzt überall `…,1` ergänzt.
+  Merksätze für neue Widgets:
+  - `slider,<min>,<step>,<max>[,1]` – 4 oder 5 Felder, mehr lehnt FHEMWEB ab.
+  - Dezimalstellen ⇒ `,1` zwingend. Die Anzahl Nachkommastellen leitet FHEMWEB
+    aus dem **Step-String** ab (`toFixed(dp)`), `0.1` ergibt also eine Stelle.
+  - `(max − min)` sollte durch den Step glatt teilbar sein, sonst ist `max`
+    mit dem Regler nicht erreichbar.
+  - Abgesichert durch `t/03_widgets.t` (statische Prüfung des Quelltexts, damit
+    beide Listen erfasst sind: AttrList und set-Liste).
 - v0.12.1: **Fix zu v0.12.0** – `heatpumpReadOnly` hatte die Freigabe-Gates
   übersprungen: `$wpWant = $wpOn && $heatEnabled && $heatNeeded`, also **ohne**
   Zeitfenster, Solarindex und `wpHeatOk`. Weil `$wpWant` den Filter treibt, lief
