@@ -1423,7 +1423,10 @@ sub PoolControl_dumpConfig {
         folgt denselben Gates wie sonst (Zeitfenster, <code>solarIndex</code>,
         Heizbedarf, Pool unter <code>heatpumpTemp</code>). Ein eingeschalteter Dummy
         allein lässt die WP also nicht heizen, solange z. B. der Solarindex zu
-        niedrig ist; <code>lastDecision</code> nennt den Grund. Gedacht für eine WP, die sich (noch)
+        niedrig ist; <code>lastDecision</code> nennt den Grund.<br>
+        Rollenverteilung: der zugeordnete Dummy ist der <b>Hauptschalter</b>
+        (hängt die WP überhaupt am Strom?), <code>wpStartTime</code>/<code>wpEndTime</code>
+        ist ihr <b>Fahrplan</b>, und die Filterpumpe entscheidet, ob sie zum Zug kommt. Gedacht für eine WP, die sich (noch)
         nicht fernsteuern lässt, z. B. an einer Zeitschaltuhr: der zugeordnete
         Dummy wird von Hand gepflegt und spiegelt die Realität &ndash; ohne dieses
         Attribut überschreibt das Modul ihn sofort wieder. Der beobachtete Zustand

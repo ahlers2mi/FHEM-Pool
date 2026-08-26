@@ -15,6 +15,7 @@ FHEM-Modul **PoolControl** zur Steuerung von Poolfilterung und Poolheizung
 - [Get](#get)
 - [Attribute](#attribute)
 - [Readings](#readings)
+- [Tests](#tests)
 - [Beispiel-Setup](#beispiel-setup)
 - [Migration aus der bestehenden Automatik](#migration-aus-der-bestehenden-automatik)
 
@@ -167,6 +168,12 @@ aber als WP-Anteil in den Auskühlschutz ein.
 > Die **Freigabebedingungen gelten weiter**: der Filter läuft nur für die WP,
 > wenn Zeitfenster, `solarIndex`, Heizbedarf und `heatpumpTemp` es erlauben. Ein
 > von Hand eingeschalteter Dummy heizt also nicht am Solarindex vorbei.
+>
+> Merkhilfe für die Rollen im Beobachten-Modus: der **Dummy ist der
+> Hauptschalter** („hängt die WP überhaupt am Strom?" – an lassen, solange die
+> Zeitschaltuhr steckt, aus beim Einwintern), das **Zeitfenster
+> `wpStartTime`–`wpEndTime` ist ihr Fahrplan**, und der **Filter entscheidet,
+> ob sie zum Zug kommt**.
 
 ### Saisonbetrieb: filtern ohne heizen
 Im Herbst soll oft noch gefiltert, aber nicht mehr geheizt werden. Dafür gibt es
@@ -391,6 +398,33 @@ sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
 | `lastDecision`       | letzte Entscheidungsbegründung |
 
 ---
+
+## Tests
+
+Im Verzeichnis `t/` liegt eine Test-Suite, die die Steuerlogik **ohne laufende
+FHEM-Instanz** durchspielt. Sie braucht nur `perl` – keine FHEM-Installation,
+keine CPAN-Module:
+
+```bash
+sh t/run.sh          # Exitcode 0 = alles grün
+```
+
+| Datei | Inhalt |
+|-------|--------|
+| `t/fhem_stub.pl` | Minimaler FHEM-Ersatz (Readings, Attribute, `fhem()`-Protokoll) **mit simulierbarer Uhr**; lädt das Modul per `do` |
+| `t/01_restore.t` | Tageslaufzeit über einen Neustart (`PoolControl_restoreState`) |
+| `t/02_control.t` | Steuerlogik-Szenarien: Saisonbetrieb, Umrühren, Zeitschaltuhr-WP, Solarindex, Sommer-Regressionen |
+
+Der Kern ist die **simulierte Uhr**: `time()` *und* `localtime()` werden in
+einem `BEGIN`-Block überschrieben (`PoolControl_inWindow` ruft ein argumentloses
+`localtime` auf, das eine reine `time()`-Überschreibung umgehen würde). Damit
+lassen sich Zeitpunkte prüfen, die man in einer echten Instanz nur durch Warten
+erreicht – Nachtfenster, WP-Zeitfenster, Tageswechsel.
+
+Ein Szenario stellt einen **echten Live-Zustand** der Anlage nach (aus
+`fhem.save` übernommen) und belegt, dass die Steuerung dort heute richtig
+entscheidet. Neue Szenarien lassen sich mit `setup_pool(...)` und
+`run_at($h, "HH:MM")` in wenigen Zeilen ergänzen.
 
 ## Beispiel-Setup
 
