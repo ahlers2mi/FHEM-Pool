@@ -15,6 +15,7 @@ FHEM-Modul **PoolControl** zur Steuerung von Poolfilterung und Poolheizung
 - [Get](#get)
 - [Attribute](#attribute)
 - [Readings](#readings)
+- [Tests](#tests)
 - [Beispiel-Setup](#beispiel-setup)
 - [Migration aus der bestehenden Automatik](#migration-aus-der-bestehenden-automatik)
 
@@ -164,6 +165,15 @@ aber als WP-Anteil in den Auskühlschutz ein.
 > **Filterpumpe ist dann faktisch der WP-Schalter.** Mit `heatpumpReadOnly 1`
 > schaltet das Modul die WP nie, sondern übernimmt den (von Hand gepflegten)
 > gemeldeten Zustand – sonst überschreibt es den Dummy sofort wieder.
+> Die **Freigabebedingungen gelten weiter**: der Filter läuft nur für die WP,
+> wenn Zeitfenster, `solarIndex`, Heizbedarf und `heatpumpTemp` es erlauben. Ein
+> von Hand eingeschalteter Dummy heizt also nicht am Solarindex vorbei.
+>
+> Merkhilfe für die Rollen im Beobachten-Modus: der **Dummy ist der
+> Hauptschalter** („hängt die WP überhaupt am Strom?" – an lassen, solange die
+> Zeitschaltuhr steckt, aus beim Einwintern), das **Zeitfenster
+> `wpStartTime`–`wpEndTime` ist ihr Fahrplan**, und der **Filter entscheidet,
+> ob sie zum Zug kommt**.
 
 ### Saisonbetrieb: filtern ohne heizen
 Im Herbst soll oft noch gefiltert, aber nicht mehr geheizt werden. Dafür gibt es
@@ -323,7 +333,7 @@ sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
 |------------------------|-------------|--------------|
 | `heatpumpSwitch`       | –           | **Gerätename** der Wärmepumpe (bzw. des Dummys). Leer = WP wird komplett ignoriert (weder geschaltet noch gelesen) |
 | `heatpumpStateReading` | `state`     | **Name des Readings** innerhalb von `heatpumpSwitch`, in dem on/off steht – hier gehört *kein* Gerätename hinein |
-| `heatpumpReadOnly`     | `0`         | `1` = Modul **beobachtet** die WP nur und schaltet sie nie (WP an der Zeitschaltuhr, nicht fernsteuerbar). Der gemeldete Zustand zählt dann für die Entscheidungen; bei `heating off` setzt das Modul die Automatik-Filterung aus, solange die WP Strom hat – WP meldet „an" **oder** aktuelle Zeit im Fenster `wpStartTime`–`wpEndTime` (= Schaltzeit der Uhr) |
+| `heatpumpReadOnly`     | `0`         | `1` = Modul **beobachtet** die WP nur und schaltet sie nie (WP an der Zeitschaltuhr, nicht fernsteuerbar). Ersetzt nur das *Schalten*, **nicht die Freigabebedingungen**: der Filter folgt weiter Zeitfenster, `solarIndex`, Heizbedarf und `heatpumpTemp`. Bei `heating off` setzt das Modul die Automatik-Filterung aus, solange die WP Strom hat – WP meldet „an" **oder** aktuelle Zeit im Fenster `wpStartTime`–`wpEndTime` (= Schaltzeit der Uhr) |
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
@@ -375,7 +385,7 @@ sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
 | `solarIndex`         | aktueller Solarindex |
 | `heatingNeeded`      | yes/no |
 | `filterState`        | gewünschter Filterzustand on/off |
-| `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf / nur filtern (Heizen aus) / aus: WP an, soll nicht heizen). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. |
+| `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf / nur filtern (Heizen aus) / aus: WP an, soll nicht heizen / aus: WP-Zeitfenster, soll nicht heizen). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. Die WP-Labels erscheinen nur, wenn der Filter wirklich für die WP läuft |
 | `filterRuntimeToday` | heutige Filterlaufzeit (Minuten) |
 | `filterRuntimeDay`   | Zähltag zu `filterRuntimeToday` (`YYYY-MM-DD`) – damit die Laufzeit einen FHEM-Neustart übersteht |
 | `filterRemaining`    | heute noch fehlende Filterzeit (Stunden) |
@@ -388,6 +398,33 @@ sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
 | `lastDecision`       | letzte Entscheidungsbegründung |
 
 ---
+
+## Tests
+
+Im Verzeichnis `t/` liegt eine Test-Suite, die die Steuerlogik **ohne laufende
+FHEM-Instanz** durchspielt. Sie braucht nur `perl` – keine FHEM-Installation,
+keine CPAN-Module:
+
+```bash
+sh t/run.sh          # Exitcode 0 = alles grün
+```
+
+| Datei | Inhalt |
+|-------|--------|
+| `t/fhem_stub.pl` | Minimaler FHEM-Ersatz (Readings, Attribute, `fhem()`-Protokoll) **mit simulierbarer Uhr**; lädt das Modul per `do` |
+| `t/01_restore.t` | Tageslaufzeit über einen Neustart (`PoolControl_restoreState`) |
+| `t/02_control.t` | Steuerlogik-Szenarien: Saisonbetrieb, Umrühren, Zeitschaltuhr-WP, Solarindex, Sommer-Regressionen |
+
+Der Kern ist die **simulierte Uhr**: `time()` *und* `localtime()` werden in
+einem `BEGIN`-Block überschrieben (`PoolControl_inWindow` ruft ein argumentloses
+`localtime` auf, das eine reine `time()`-Überschreibung umgehen würde). Damit
+lassen sich Zeitpunkte prüfen, die man in einer echten Instanz nur durch Warten
+erreicht – Nachtfenster, WP-Zeitfenster, Tageswechsel.
+
+Ein Szenario stellt einen **echten Live-Zustand** der Anlage nach (aus
+`fhem.save` übernommen) und belegt, dass die Steuerung dort heute richtig
+entscheidet. Neue Szenarien lassen sich mit `setup_pool(...)` und
+`run_at($h, "HH:MM")` in wenigen Zeilen ergänzen.
 
 ## Beispiel-Setup
 

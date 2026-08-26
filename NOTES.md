@@ -155,6 +155,21 @@ getroffene Entscheidungen und geparkte To-dos. Stand: 2026-06-26, Modul v0.10.0.
   `.solarLastRunTime` (Zeitstempel des letzten Solarbetriebs) und
   `.solarSettleBonus` (bei jedem echten Anlaufversuch neu bestimmt: `coldExtra`
   bei Idle ≥ `coldAfter`, sonst 0). `solarColdStartExtra 0` deaktiviert.
+- v0.12.1: **Fix zu v0.12.0** – `heatpumpReadOnly` hatte die Freigabe-Gates
+  übersprungen: `$wpWant = $wpOn && $heatEnabled && $heatNeeded`, also **ohne**
+  Zeitfenster, Solarindex und `wpHeatOk`. Weil `$wpWant` den Filter treibt, lief
+  die Filterpumpe (und damit die WP) bei eingeschaltetem Dummy **am Solarindex
+  vorbei** – genau der gemeldete Fehler. Jetzt gilt wieder
+  `$wpOn && $heatEnabled && $inWindow && $indexOk && $wpHeatOk`.
+  Merksatz: **readOnly ersetzt nur das Schalten, nicht die Freigabelogik.**
+  Zwei Nebenbefunde mit erledigt:
+  - Die „WP aus: …"-Begründungen standen nur im Nicht-readOnly-Zweig – im
+    Beobachten-Modus erklärte `lastDecision` also gar nichts. Jetzt für beide
+    Modi, plus „WP laeuft nicht (nur beobachtet)".
+  - `filterReason` zeigte `WP`/`WP+Solar`, obwohl der Filter aus war (die Labels
+    hingen an `$wpActive`, dem beobachteten Zustand). WP-Labels jetzt nur bei
+    `$wpWant`. Die Solar-Labels bleiben absichtlich auch bei Filter aus
+    (Solar läuft ja mit abgeschalteter Filterpumpe).
 - v0.12.0: **Saisonbetrieb „filtern ohne heizen"** (`attr`/`set heating on|off`)
   + Umrühr-Gate. Anlass: im Herbst wird die Solltemperatur nie erreicht, der
   Nutzer hatte das Soll deshalb auf 5 °C gestellt – für das Modul heißt das
