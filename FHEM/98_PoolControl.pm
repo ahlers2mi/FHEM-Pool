@@ -898,6 +898,11 @@ sub PoolControl_Control {
     # ======================================================================
     my $wpState = "off";
     my $wpWant  = 0;
+    # Liegt die aktuelle Zeit im WP-Zeitfenster? Wird unten fuer den
+    # Heizschutz gebraucht (bei einer WP an der Zeitschaltuhr beschreibt das
+    # Fenster, wann sie Strom hat).
+    my $inWpWindow = 0;
+    my $hpReadOnly = AttrVal($name, "heatpumpReadOnly", 0) ? 1 : 0;
     if ($hpDev ne "") {
         my $wpStart  = AttrVal($name, "wpStartTime", "09:00");
         my $wpEnd    = AttrVal($name, "wpEndTime",   "22:00");
@@ -911,6 +916,7 @@ sub PoolControl_Control {
         my $idxOff = AttrVal($name, "solarIndexOff", $idxOn) + 0;
 
         my $inWindow = PoolControl_inWindow($wpStart, $wpEnd);
+        $inWpWindow  = $inWindow;
         my $indexOk;
         if    ($index >= $idxOn)  { $indexOk = 1; }     # genug Überschuss -> ein
         elsif ($index <= $idxOff) { $indexOk = 0; }     # zu wenig -> aus
@@ -934,7 +940,7 @@ sub PoolControl_Control {
         # sonst überschreibt das Modul den von Hand gepflegten Zustand des
         # Dummys sofort wieder. Der beobachtete Zustand zählt dann: läuft die WP
         # und ist Heizen erwünscht, liefert der Filter den nötigen Durchfluss.
-        if (AttrVal($name, "heatpumpReadOnly", 0)) {
+        if ($hpReadOnly) {
             $wpWant  = ($wpOn && $heatEnabled && $heatNeeded) ? 1 : 0;
             $wpState = ($wpOn ? "on" : "off") . " (beobachtet)";
         }
@@ -1064,11 +1070,17 @@ sub PoolControl_Control {
     # Automatik. Solar löst KEINE Filterung aus (eigener langsamer Kreis); der
     # Filter folgt dem WP-Wunsch (wpWant, damit beide im selben Zyklus starten),
     # der Nachtfilterung und dem Umrühren.
-    # Soll nicht geheizt werden und die WP meldet trotzdem "an" (Zeitschaltuhr,
-    # die das Modul nicht fernsteuern kann), dann würde jeder Filterlauf über den
-    # Durchfluss heizen -> Automatik-Filterung aussetzen. Hand-/Zwangsbetrieb
-    # geht weiterhin vor, dafür warnt lastDecision.
-    my $wpBlocksFilter = (!$heatEnabled && $wpOn) ? 1 : 0;
+    # Soll nicht geheizt werden, die WP hat aber Strom, dann würde jeder
+    # Filterlauf über den Durchfluss heizen -> Automatik-Filterung aussetzen.
+    # Hand-/Zwangsbetrieb geht weiterhin vor, dafür warnt lastDecision.
+    # "Hat Strom" heißt:
+    #   * die WP meldet "an" (Reading), oder
+    #   * heatpumpReadOnly und wir sind im WP-Zeitfenster. Eine WP, die das Modul
+    #     nicht fernsteuern kann, hängt typischerweise an einer Zeitschaltuhr -
+    #     dann beschreibt wpStartTime/wpEndTime genau deren Schaltzeit, und zwar
+    #     ohne dass der zugeordnete Dummy von Hand gepflegt werden muss.
+    my $wpPowered      = ($wpOn || ($hpReadOnly && $inWpWindow)) ? 1 : 0;
+    my $wpBlocksFilter = (!$heatEnabled && $wpPowered) ? 1 : 0;
 
     my $wantFilter;
     if    ($mode eq "forceOn")   { $wantFilter = 1; }
@@ -1104,7 +1116,8 @@ sub PoolControl_Control {
         # Vor den Quellen pruefen: die WP kann "an" melden (Zeitschaltuhr),
         # obwohl gerade bewusst nicht geheizt wird - dann laeuft der Filter
         # nicht und "WP"/"Nachtfilterung" waere die falsche Begruendung.
-        : $wpBlocksFilter     ? "aus: WP an, soll nicht heizen"
+        : $wpBlocksFilter     ? ($wpOn ? "aus: WP an, soll nicht heizen"
+                                       : "aus: WP-Zeitfenster, soll nicht heizen")
         : ($wpActive && $solarHeating) ? "WP+Solar"
         : $wpActive     ? "WP"
         : $solarHeating ? "Solar"
@@ -1120,9 +1133,10 @@ sub PoolControl_Control {
     # trotzdem. Typisch, wenn die WP an einer Zeitschaltuhr hängt - dagegen hilft
     # nur, sie physisch abzuschalten.
     if ($wpBlocksFilter) {
+        my $why = $wpOn ? "WP meldet an" : "WP-Zeitfenster (Zeitschaltuhr)";
         push @reason, $wantFilter
-            ? "Achtung: Filter laeuft (Hand/Zwang) und WP meldet an -> heizt trotzdem"
-            : "Filter aus: WP meldet an, es soll nicht geheizt werden";
+            ? "Achtung: Filter laeuft (Hand/Zwang), $why -> heizt trotzdem"
+            : "Filter aus: $why, es soll nicht geheizt werden";
     }
 
     # ======================================================================
@@ -1393,10 +1407,14 @@ sub PoolControl_dumpConfig {
         Dummy wird von Hand gepflegt und spiegelt die Realität &ndash; ohne dieses
         Attribut überschreibt das Modul ihn sofort wieder. Der beobachtete Zustand
         zählt dann für die Entscheidungen: läuft die WP und ist Heizen erwünscht,
-        liefert die Filterpumpe den nötigen Durchfluss; ist <code>heating off</code>
-        und die WP meldet trotzdem <code>on</code>, setzt das Modul die
-        Automatik-Filterung aus, weil jeder Durchfluss sonst heizen würde
-        (Hand-/Zwangsbetrieb geht weiter vor, <code>lastDecision</code> warnt dann).</li>
+        liefert die Filterpumpe den nötigen Durchfluss. Ist <code>heating off</code>,
+        setzt das Modul die Automatik-Filterung aus, solange die WP Strom hat, weil
+        jeder Durchfluss sonst heizen würde &ndash; und zwar sowohl wenn die WP
+        <code>on</code> meldet als auch (nur mit diesem Attribut) innerhalb des
+        Zeitfensters <code>wpStartTime</code>&ndash;<code>wpEndTime</code>: bei einer
+        WP an der Zeitschaltuhr beschreibt das Fenster genau deren Schaltzeit, ganz
+        ohne den Dummy von Hand pflegen zu müssen. Hand-/Zwangsbetrieb geht weiter
+        vor, <code>lastDecision</code> warnt dann.</li>
     <li><a id="PoolControl-attr-heatpumpOnRegex"></a><b>heatpumpOnRegex</b><br>
         Typ: textField. Regex für den Ein-Zustand (Default <code>on|ON|1</code>).</li>
     <li><a id="PoolControl-attr-heatpumpOnCmd"></a><b>heatpumpOnCmd</b><br>
@@ -1468,7 +1486,8 @@ sub PoolControl_dumpConfig {
         <code>Solar</code> (Filter dabei bewusst aus), <code>Solar (Anlauf)</code>, <code>Nachtfilterung</code>,
         <code>Umruehren</code>, <code>Heizbedarf, keine Quelle</code>, <code>kein Bedarf</code>,
         <code>nur filtern (Heizen aus)</code> (bei <code>heating off</code>),
-        <code>aus: WP an, soll nicht heizen</code> (WP meldet an, obwohl nicht geheizt werden soll)
+        <code>aus: WP an, soll nicht heizen</code> bzw.
+        <code>aus: WP-Zeitfenster, soll nicht heizen</code> (die WP hat Strom, obwohl nicht geheizt werden soll)
         bzw. <code>manuell an</code>/<code>manuell aus</code> (<code>set filter</code>) und
         <code>force on</code>/<code>force off</code> im Handbetrieb.</li>
     <li><b>filterRuntimeToday</b> &ndash; heutige Filterlaufzeit in Minuten (Tageswechsel bei <code>filterNightEnd</code>).</li>

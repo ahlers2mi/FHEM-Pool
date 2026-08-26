@@ -183,11 +183,22 @@ auf „heizen" wäre im Herbst genau falsch.
 > den Pool dann sogar. Ein manuelles `set targetTemp` wird bei aktivem
 > `targetTempSchedule` ohnehin am nächsten Zeitplan-Punkt wieder überschrieben.
 
-Meldet die WP trotz `heating off` „an" (Zeitschaltuhr), setzt das Modul die
-**Automatik-Filterung aus**, damit der Durchfluss nicht heizt; `filterReason`
-zeigt dann `aus: WP an, soll nicht heizen`. Hand- und Zwangsbetrieb
-(`set filter on`, `mode forceOn`) gehen weiter vor – `lastDecision` warnt in
-diesem Fall, dass trotzdem geheizt wird.
+Hat die WP trotz `heating off` Strom, setzt das Modul die **Automatik-Filterung
+aus**, damit der Durchfluss nicht heizt. Als „hat Strom" gilt:
+
+- die WP meldet `on` → `filterReason: aus: WP an, soll nicht heizen`, oder
+- mit `heatpumpReadOnly 1` die aktuelle Zeit im Fenster
+  `wpStartTime`–`wpEndTime` → `filterReason: aus: WP-Zeitfenster, soll nicht
+  heizen`. Bei einer WP an der Zeitschaltuhr beschreibt dieses Fenster genau
+  deren Schaltzeit; der Schutz greift damit **ohne** dass der Dummy von Hand
+  gepflegt werden muss.
+
+Hand- und Zwangsbetrieb (`set filter on`, `mode forceOn`) gehen weiter vor –
+`lastDecision` warnt in diesem Fall, dass trotzdem geheizt wird.
+
+> Praxisbeispiel: Zeitschaltuhr 09:00–19:00 (`wpStartTime`/`wpEndTime`),
+> Nachtfenster 22:00–06:00. Beide überschneiden sich nicht – die Nachtfilterung
+> erfüllt das Tagessoll also vollständig, ohne die WP je anzustoßen.
 
 ---
 
@@ -312,7 +323,7 @@ sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
 |------------------------|-------------|--------------|
 | `heatpumpSwitch`       | –           | **Gerätename** der Wärmepumpe (bzw. des Dummys). Leer = WP wird komplett ignoriert (weder geschaltet noch gelesen) |
 | `heatpumpStateReading` | `state`     | **Name des Readings** innerhalb von `heatpumpSwitch`, in dem on/off steht – hier gehört *kein* Gerätename hinein |
-| `heatpumpReadOnly`     | `0`         | `1` = Modul **beobachtet** die WP nur und schaltet sie nie (WP an der Zeitschaltuhr, nicht fernsteuerbar). Der gemeldete Zustand zählt dann für die Entscheidungen; bei `heating off` + WP „an" setzt das Modul die Automatik-Filterung aus, damit der Durchfluss nicht heizt |
+| `heatpumpReadOnly`     | `0`         | `1` = Modul **beobachtet** die WP nur und schaltet sie nie (WP an der Zeitschaltuhr, nicht fernsteuerbar). Der gemeldete Zustand zählt dann für die Entscheidungen; bei `heating off` setzt das Modul die Automatik-Filterung aus, solange die WP Strom hat – WP meldet „an" **oder** aktuelle Zeit im Fenster `wpStartTime`–`wpEndTime` (= Schaltzeit der Uhr) |
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
