@@ -414,6 +414,7 @@ sh t/run.sh          # Exitcode 0 = alles grün
 | `t/fhem_stub.pl` | Minimaler FHEM-Ersatz (Readings, Attribute, `fhem()`-Protokoll) **mit simulierbarer Uhr**; lädt das Modul per `do` |
 | `t/01_restore.t` | Tageslaufzeit über einen Neustart (`PoolControl_restoreState`) |
 | `t/02_control.t` | Steuerlogik-Szenarien: Saisonbetrieb, Umrühren, Zeitschaltuhr-WP, Solarindex, Sommer-Regressionen |
+| `t/03_widgets.t` | Statische Prüfung der Slider-Definitionen (Float-Flag, Feldzahl, erreichbares Maximum) |
 
 Der Kern ist die **simulierte Uhr**: `time()` *und* `localtime()` werden in
 einem `BEGIN`-Block überschrieben (`PoolControl_inWindow` ruft ein argumentloses
@@ -425,6 +426,13 @@ Ein Szenario stellt einen **echten Live-Zustand** der Anlage nach (aus
 `fhem.save` übernommen) und belegt, dass die Steuerung dort heute richtig
 entscheidet. Neue Szenarien lassen sich mit `setup_pool(...)` und
 `run_at($h, "HH:MM")` in wenigen Zeilen ergänzen.
+
+> **Slider mit Dezimal-Schritten brauchen ein Float-Flag.** FHEMWEB liest
+> `slider,<min>,<step>,<max>[,1]`; fehlt die `1` als fünftes Feld, läuft der Wert
+> durch `parseInt()` und der Regler rastet auf **ganze Zahlen** – der feine Step
+> ist dann wirkungslos. `t/03_widgets.t` prüft das für alle Slider des Moduls
+> mit, zusammen mit der Feldzahl und der Frage, ob das Maximum mit dem Step
+> überhaupt erreichbar ist.
 
 ## Beispiel-Setup
 
