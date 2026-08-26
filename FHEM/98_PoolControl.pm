@@ -143,7 +143,7 @@ sub PoolControl_Define {
 
     my $name = $a[0];
     $hash->{NAME}    = $name;
-    $hash->{VERSION} = "0.12.0";
+    $hash->{VERSION} = "0.12.1";
 
     # Operative Zustände als Readings anlegen (nur falls fehlend). Diese setzen
     # sich nach einem Neustart bewusst auf sichere Defaults zurück:
@@ -938,10 +938,17 @@ sub PoolControl_Control {
         # heatpumpReadOnly: das Modul beobachtet die WP nur und schaltet sie
         # nicht. Für eine WP an der Zeitschaltuhr ist das der ehrliche Fall -
         # sonst überschreibt das Modul den von Hand gepflegten Zustand des
-        # Dummys sofort wieder. Der beobachtete Zustand zählt dann: läuft die WP
-        # und ist Heizen erwünscht, liefert der Filter den nötigen Durchfluss.
+        # Dummys sofort wieder.
+        #
+        # Der beobachtete Zustand ersetzt dabei nur das SCHALTEN, nicht die
+        # Freigabebedingungen: die WP heizt nur mit Durchfluss, also entscheidet
+        # weiterhin der Filter, ob sie zum Zug kommt - und der folgt denselben
+        # Gates wie sonst (Zeitfenster, Solarindex/PV-Überschuss, Heizbedarf,
+        # Pool unter WP-Sollwert). Sonst würde die WP bei jedem eingeschalteten
+        # Dummy auf Netzstrom heizen, obwohl der Solarindex das gerade verbietet.
         if ($hpReadOnly) {
-            $wpWant  = ($wpOn && $heatEnabled && $heatNeeded) ? 1 : 0;
+            $wpWant  = ($wpOn && $heatEnabled && $inWindow && $indexOk && $wpHeatOk)
+                     ? 1 : 0;
             $wpState = ($wpOn ? "on" : "off") . " (beobachtet)";
         }
         else {
@@ -966,19 +973,22 @@ sub PoolControl_Control {
                 $wpState = $wpOn ? "on" : "off";
             }
 
-            # Begründung für den deaktivierten Zustand protokollieren (nur
-            # Automatik). Bei heating off steht der Grund schon oben -> nicht
-            # doppelt melden.
-            if (!$wpWant && $mode eq "auto" && $heatEnabled) {
-                push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
-                push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
-                    if ($inWindow && !$indexOk);
-                if ($inWindow && $indexOk && !$wpHeatOk) {
-                    push @reason, (defined $poolTemp && !$heatNeeded)
-                        ? "WP aus: Soll erreicht"
-                        : "WP aus: Pool >= WP-Sollwert ($hpTemp)";
-                }
+        }
+
+        # Begründung für den deaktivierten Zustand protokollieren (nur
+        # Automatik, beide Modi). Bei heating off steht der Grund schon oben ->
+        # nicht doppelt melden.
+        if (!$wpWant && $mode eq "auto" && $heatEnabled) {
+            push @reason, "WP aus: ausserhalb Zeitfenster" if (!$inWindow);
+            push @reason, "WP aus: Solarindex zu niedrig ($index, ein>=$idxOn/aus<=$idxOff)"
+                if ($inWindow && !$indexOk);
+            if ($inWindow && $indexOk && !$wpHeatOk) {
+                push @reason, (defined $poolTemp && !$heatNeeded)
+                    ? "WP aus: Soll erreicht"
+                    : "WP aus: Pool >= WP-Sollwert ($hpTemp)";
             }
+            push @reason, "WP laeuft nicht (nur beobachtet)"
+                if ($hpReadOnly && !$wpOn && $inWindow && $indexOk && $wpHeatOk);
         }
     }
     my $wpActive = PoolControl_isOn($hpDev, $hpRd, $hpOnRe);
@@ -1118,8 +1128,13 @@ sub PoolControl_Control {
         # nicht und "WP"/"Nachtfilterung" waere die falsche Begruendung.
         : $wpBlocksFilter     ? ($wpOn ? "aus: WP an, soll nicht heizen"
                                        : "aus: WP-Zeitfenster, soll nicht heizen")
-        : ($wpActive && $solarHeating) ? "WP+Solar"
-        : $wpActive     ? "WP"
+        # WP-Labels nur, wenn der Filter wirklich für die WP läuft. Im
+        # Beobachten-Modus kann die WP "an" melden, während der Filter bewusst
+        # aus bleibt (z. B. Solarindex zu niedrig) - dann wäre "WP" gelogen.
+        # Die Solar-Labels stehen dagegen absichtlich auch bei Filter aus:
+        # Solar läuft mit abgeschalteter Filterpumpe (langsamer Kreis).
+        : ($wpWant && $wpActive && $solarHeating) ? "WP+Solar"
+        : ($wpWant && $wpActive) ? "WP"
         : $solarHeating ? "Solar"
         : $solarActive  ? "Solar (Anlauf)"
         : $nightFill      ? "Nachtfilterung"
@@ -1402,7 +1417,13 @@ sub PoolControl_dumpConfig {
         Gerät steht in <code>heatpumpSwitch</code>.</li>
     <li><a id="PoolControl-attr-heatpumpReadOnly"></a><b>heatpumpReadOnly</b><br>
         Typ: 0|1 (Default 0). Bei <code>1</code> <b>beobachtet</b> das Modul die
-        Wärmepumpe nur und schaltet sie nie. Gedacht für eine WP, die sich (noch)
+        Wärmepumpe nur und schaltet sie nie. Der beobachtete Zustand ersetzt dabei
+        nur das <i>Schalten</i>, <b>nicht die Freigabebedingungen</b>: die WP heizt
+        nur mit Durchfluss, also entscheidet weiter die Filterpumpe &ndash; und die
+        folgt denselben Gates wie sonst (Zeitfenster, <code>solarIndex</code>,
+        Heizbedarf, Pool unter <code>heatpumpTemp</code>). Ein eingeschalteter Dummy
+        allein lässt die WP also nicht heizen, solange z. B. der Solarindex zu
+        niedrig ist; <code>lastDecision</code> nennt den Grund. Gedacht für eine WP, die sich (noch)
         nicht fernsteuern lässt, z. B. an einer Zeitschaltuhr: der zugeordnete
         Dummy wird von Hand gepflegt und spiegelt die Realität &ndash; ohne dieses
         Attribut überschreibt das Modul ihn sofort wieder. Der beobachtete Zustand

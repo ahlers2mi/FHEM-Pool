@@ -164,6 +164,9 @@ aber als WP-Anteil in den Auskühlschutz ein.
 > **Filterpumpe ist dann faktisch der WP-Schalter.** Mit `heatpumpReadOnly 1`
 > schaltet das Modul die WP nie, sondern übernimmt den (von Hand gepflegten)
 > gemeldeten Zustand – sonst überschreibt es den Dummy sofort wieder.
+> Die **Freigabebedingungen gelten weiter**: der Filter läuft nur für die WP,
+> wenn Zeitfenster, `solarIndex`, Heizbedarf und `heatpumpTemp` es erlauben. Ein
+> von Hand eingeschalteter Dummy heizt also nicht am Solarindex vorbei.
 
 ### Saisonbetrieb: filtern ohne heizen
 Im Herbst soll oft noch gefiltert, aber nicht mehr geheizt werden. Dafür gibt es
@@ -323,7 +326,7 @@ sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
 |------------------------|-------------|--------------|
 | `heatpumpSwitch`       | –           | **Gerätename** der Wärmepumpe (bzw. des Dummys). Leer = WP wird komplett ignoriert (weder geschaltet noch gelesen) |
 | `heatpumpStateReading` | `state`     | **Name des Readings** innerhalb von `heatpumpSwitch`, in dem on/off steht – hier gehört *kein* Gerätename hinein |
-| `heatpumpReadOnly`     | `0`         | `1` = Modul **beobachtet** die WP nur und schaltet sie nie (WP an der Zeitschaltuhr, nicht fernsteuerbar). Der gemeldete Zustand zählt dann für die Entscheidungen; bei `heating off` setzt das Modul die Automatik-Filterung aus, solange die WP Strom hat – WP meldet „an" **oder** aktuelle Zeit im Fenster `wpStartTime`–`wpEndTime` (= Schaltzeit der Uhr) |
+| `heatpumpReadOnly`     | `0`         | `1` = Modul **beobachtet** die WP nur und schaltet sie nie (WP an der Zeitschaltuhr, nicht fernsteuerbar). Ersetzt nur das *Schalten*, **nicht die Freigabebedingungen**: der Filter folgt weiter Zeitfenster, `solarIndex`, Heizbedarf und `heatpumpTemp`. Bei `heating off` setzt das Modul die Automatik-Filterung aus, solange die WP Strom hat – WP meldet „an" **oder** aktuelle Zeit im Fenster `wpStartTime`–`wpEndTime` (= Schaltzeit der Uhr) |
 | `heatpumpOnRegex`      | `on\|ON\|1` | Regex für „an" |
 | `heatpumpOnCmd`        | `on`        | Einschaltkommando |
 | `heatpumpOffCmd`       | `off`       | Ausschaltkommando |
@@ -375,7 +378,7 @@ sogar unfreiwillig**, weil der Filter den Durchfluss liefert. Bei
 | `solarIndex`         | aktueller Solarindex |
 | `heatingNeeded`      | yes/no |
 | `filterState`        | gewünschter Filterzustand on/off |
-| `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf / nur filtern (Heizen aus) / aus: WP an, soll nicht heizen). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. |
+| `filterReason`       | Grund (WP+Solar / WP / Solar / Solar (Anlauf) / Nachtfilterung / Umruehren / Heizbedarf, keine Quelle / kein Bedarf / nur filtern (Heizen aus) / aus: WP an, soll nicht heizen / aus: WP-Zeitfenster, soll nicht heizen). Bei `Solar` (ohne WP) ist der Filter bewusst **aus**. Die WP-Labels erscheinen nur, wenn der Filter wirklich für die WP läuft |
 | `filterRuntimeToday` | heutige Filterlaufzeit (Minuten) |
 | `filterRuntimeDay`   | Zähltag zu `filterRuntimeToday` (`YYYY-MM-DD`) – damit die Laufzeit einen FHEM-Neustart übersteht |
 | `filterRemaining`    | heute noch fehlende Filterzeit (Stunden) |
